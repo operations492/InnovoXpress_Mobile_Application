@@ -1,0 +1,49 @@
+{
+  "cli": {
+    "version": ">= 12.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "GOOGLE_MAPS_API_KEY_ANDROID": ""
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "http://192.168.1.20:4000",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://nrphdvaeujwspfohaesu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "",
+        "EXPO_PUBLIC_LOCATION_INTERVAL_MS": "15000",
+        "EXPO_PUBLIC_LOCATION_DISTANCE_M": "25",
+        "GOOGLE_MAPS_API_KEY_ANDROID": ""
+      }
+    },
+    "production": {
+      "distribution": "store",
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.innovoxpress.com",
+        "EXPO_PUBLIC_SUPABASE_URL": "https://nrphdvaeujwspfohaesu.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "",
+        "EXPO_PUBLIC_LOCATION_INTERVAL_MS": "15000",
+        "EXPO_PUBLIC_LOCATION_DISTANCE_M": "25",
+        "GOOGLE_MAPS_API_KEY_ANDROID": ""
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
