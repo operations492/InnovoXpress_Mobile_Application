@@ -1,7 +1,9 @@
 import * as Crypto from 'expo-crypto';
 import { File, Paths } from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { Alert, Linking, Platform } from 'react-native';
+import { Linking, Platform } from 'react-native';
+
+import { showDialog } from '@/components/Dialog';
 
 /**
  * Turning what the driver captures into what the POD endpoint accepts.
@@ -60,14 +62,16 @@ function asUploadFile(asset: ImagePicker.ImagePickerAsset, fallbackName: string)
 }
 
 function refused(what: string) {
-  Alert.alert(
-    `${what} is switched off`,
-    `Innovo Xpress needs ${what.toLowerCase()} access to record proof for this stop.`,
-    [
-      { text: 'Not now', style: 'cancel' },
-      { text: 'Open settings', onPress: () => void Linking.openSettings() },
+  void showDialog({
+    title: `${what} is switched off`,
+    tone: 'warn',
+    icon: 'lock',
+    message: `Innovo Xpress needs ${what.toLowerCase()} access to record proof for this stop.`,
+    actions: [
+      { label: 'Open settings', style: 'primary', onPress: () => void Linking.openSettings() },
+      { label: 'Not now', style: 'cancel' },
     ],
-  );
+  });
 }
 
 /** Take the proof photo. Returns null if the driver backed out. */

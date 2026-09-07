@@ -134,5 +134,26 @@ export function useLocationReadiness(enabled: boolean): LocationReadiness {
     return () => sub.remove();
   }, [enabled, refresh]);
 
+  /**
+   * …and poll, because the foreground event is not enough.
+   *
+   * Android's quick-settings shade does not reliably background the app, so a
+   * driver can switch location off with the app still open and in the
+   * foreground — no AppState change, no re-check, and the app carries on as if
+   * it were still being tracked. That is the worst of the failure modes: it
+   * looks like everything is fine while dispatch is being told a position that
+   * is no longer being measured.
+   *
+   * Neither Android nor iOS offers a "location services changed" callback to
+   * subscribe to, so asking is the only option. `hasServicesEnabledAsync` is a
+   * cheap synchronous-ish platform read, and three seconds is fast enough that
+   * the wall appears while the driver's thumb is still on the toggle.
+   */
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = setInterval(() => void refresh(), 3_000);
+    return () => clearInterval(timer);
+  }, [enabled, refresh]);
+
   return { status, background, request, refresh, openSettings, requesting };
 }

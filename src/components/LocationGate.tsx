@@ -1,6 +1,8 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { setShift } from '@/api/endpoints';
+import * as tracking from '@/features/location/tracking';
 import { useLocationReadiness, type LocationStatus } from '@/features/location/readiness';
 import { color, font, radius } from '@/theme/tokens';
 import { PrimaryButton, SecondaryButton } from './Button';
@@ -57,6 +59,44 @@ const COPY: Record<Exclude<LocationStatus, 'ready' | 'checking'>, Copy> = {
 export function LocationGate({ enabled, children }: { enabled: boolean; children: ReactNode }) {
   const insets = useSafeAreaInsets();
   const { status, background, request, openSettings, requesting } = useLocationReadiness(enabled);
+
+  /**
+   * Losing location takes the driver off shift, immediately.
+   *
+   * Blocking the app is not enough on its own: `onShift` lives on the server, so
+   * a driver who switches location off stays listed as working and their last
+   * known position sits on the dispatch map looking current. Dispatch would go
+   * on routing jobs to a pin that stopped moving — the exact false confidence
+   * this whole feature exists to prevent.
+   *
+   * Done HERE rather than in `ShiftProvider` because the gate renders instead of
+   * its children: the moment this blocks, that provider is unmounted and cannot
+   * act. Calling the endpoint directly is the only thing still alive.
+   *
+   * Best-effort and fire-once per transition. If the call fails — no signal, most
+   * likely — the server's own liveness window drops the driver off the live map
+   * within POSITION_LIVE_SECONDS anyway, and the next successful launch clocks
+   * them back on.
+   */
+  const blocked = enabled && status !== 'ready' && status !== 'checking';
+  const wentOffline = useRef(false);
+
+  useEffect(() => {
+    if (!blocked) {
+      // Reset so a later loss of location clocks off again.
+      wentOffline.current = false;
+      return;
+    }
+    if (wentOffline.current) return;
+    wentOffline.current = true;
+
+    void (async () => {
+      // Stop first: a service still reporting after the driver revoked location
+      // is the one thing here nobody would forgive.
+      await tracking.stop().catch(() => undefined);
+      await setShift(false).catch(() => undefined);
+    })();
+  }, [blocked]);
 
   if (!enabled) return <>{children}</>;
 

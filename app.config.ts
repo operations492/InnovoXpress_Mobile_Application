@@ -1,10 +1,13 @@
 import type { ConfigContext, ExpoConfig } from 'expo/config';
 
 /**
- * Expo config as code, not JSON, for one reason: the Google Maps key has to come
- * out of the environment. It is build-time native config (it ends up in
- * AndroidManifest.xml), so it cannot be read at runtime the way the
- * EXPO_PUBLIC_* values in `src/lib/env.ts` are.
+ * Expo config as code, not JSON, so the permission strings sit beside the
+ * plugins that need them.
+ *
+ * There is no map key here any more. The maps are Leaflet over OpenStreetMap
+ * tiles in a WebView (`src/components/maps.tsx`), which needs no key, no billing
+ * account and no native module — the same stack the dispatcher console draws
+ * with.
  *
  * Everything the driver app touches on the device needs a permission string, and
  * the store rejects a build whose strings are missing — so they are declared here
@@ -50,12 +53,38 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       monochromeImage: './assets/android-icon-monochrome.png',
     },
     predictiveBackGestureEnabled: false,
+    /**
+     * An explicit list REPLACES Expo's defaults rather than adding to them, so
+     * anything a module needs has to appear here by name. That is the trade for
+     * keeping the install prompt honest — and it is how the app ended up
+     * crashing on launch with:
+     *
+     *   IllegalArgumentException: Error: requested job be persisted without
+     *   holding RECEIVE_BOOT_COMPLETED permission
+     *       at expo.modules.taskManager.TaskManagerUtils.updateOrScheduleJob
+     *       at expo.modules.location.taskConsumers.LocationTaskConsumer
+     *       at expo.modules.taskManager.TaskBroadcastReceiver.onReceive
+     *
+     * `expo-task-manager` delivers every background location fix through a
+     * JobScheduler job built with `setPersisted(true)`, and Android refuses a
+     * persisted job to an app without RECEIVE_BOOT_COMPLETED. Because the throw
+     * lands inside a BroadcastReceiver, it kills the process before a single
+     * line of JavaScript runs — which is why it looked like the app closed
+     * before it opened, with nothing in the Metro logs.
+     *
+     * Worse, it self-perpetuates: the location service outlives the app
+     * (`killServiceOnDestroy: false`), so a fix is always waiting to be
+     * delivered and every relaunch dies the same way.
+     */
     permissions: [
       'ACCESS_COARSE_LOCATION',
       'ACCESS_FINE_LOCATION',
       'ACCESS_BACKGROUND_LOCATION',
       'FOREGROUND_SERVICE',
       'FOREGROUND_SERVICE_LOCATION',
+      // Required by expo-task-manager's persisted job — see above. It is not a
+      // request to run at boot; nothing in this app listens for that broadcast.
+      'RECEIVE_BOOT_COMPLETED',
       'CAMERA',
       'INTERNET',
       'ACCESS_NETWORK_STATE',
@@ -68,27 +97,11 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
      * the install prompt, and invites the obvious question at review.
      */
     blockedPermissions: ['android.permission.RECORD_AUDIO'],
-    config: {
-      googleMaps: { apiKey: process.env.GOOGLE_MAPS_API_KEY_ANDROID },
-    },
   },
 
   web: { favicon: './assets/favicon.png', bundler: 'metro' },
 
-  /**
-   * The keys above are native build config and unreadable at runtime, but the
-   * screens must know whether a map can be drawn at all: Google Maps throws on
-   * inflate when the key is missing, and that crash cannot be caught from JS.
-   *
-   * Publishing only a BOOLEAN, never the key itself — `extra` is readable by any
-   * JS in the bundle, and the key has no business being there.
-   */
-  extra: {
-    ...config.extra,
-    googleMapsKey: {
-      android: Boolean(process.env.GOOGLE_MAPS_API_KEY_ANDROID),
-    },
-  },
+  extra: { ...config.extra },
 
   plugins: [
     'expo-router',

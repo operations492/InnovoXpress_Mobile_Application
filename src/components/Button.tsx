@@ -42,19 +42,32 @@ export function PrimaryButton({
       onPress={inert ? undefined : onPress}
       style={({ pressed }) => [
         styles.primary,
-        inert ? styles.primaryOff : shadow.glow,
+        /*
+          Greyed only when DISABLED. A loading button stays brand blue and keeps
+          its glow: grey is the app saying "you cannot do this", and a button
+          that goes grey the instant it is tapped reads as a rejection rather
+          than as work in progress. It is also the only state where a white
+          spinner is visible at all.
+        */
+        disabled ? styles.primaryOff : shadow.glow,
         pressed && !inert ? styles.pressed : null,
         style,
       ]}
     >
+      {/*
+        The spinner REPLACES the icon, not the label.
+
+        A button that empties itself down to a bare spinner stops saying what it
+        is waiting on — and these waits are the ones that matter, because the tap
+        that closes a stop cannot be undone from the app. Keeping the words means
+        a driver on one bar of signal can still see which action is in flight.
+      */}
       {loading ? (
-        <ActivityIndicator color={color.onPrimary} />
-      ) : (
-        <>
-          {icon ? <Icon name={icon} size={17} color={inert ? color.faint : color.onPrimary} /> : null}
-          <Body style={[styles.primaryLabel, inert ? { color: color.faint } : null]}>{label}</Body>
-        </>
-      )}
+        <ActivityIndicator size="small" color={color.onPrimary} />
+      ) : icon ? (
+        <Icon name={icon} size={17} color={disabled ? color.faint : color.onPrimary} />
+      ) : null}
+      <Body style={[styles.primaryLabel, disabled ? { color: color.faint } : null]}>{label}</Body>
     </Pressable>
   );
 }
@@ -65,6 +78,7 @@ interface SecondaryProps {
   icon?: IconName;
   tone?: 'default' | 'danger';
   disabled?: boolean;
+  loading?: boolean;
   style?: ViewStyle;
 }
 
@@ -74,23 +88,31 @@ export function SecondaryButton({
   icon,
   tone = 'default',
   disabled = false,
+  loading = false,
   style,
 }: SecondaryProps) {
   const tint = tone === 'danger' ? color.dangerText : color.ink;
+  const inert = disabled || loading;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityState={{ disabled }}
-      onPress={disabled ? undefined : onPress}
+      accessibilityState={{ disabled: inert, busy: loading }}
+      onPress={inert ? undefined : onPress}
       style={({ pressed }) => [
         styles.secondary,
-        pressed && !disabled ? styles.secondaryPressed : null,
+        pressed && !inert ? styles.secondaryPressed : null,
+        // Faded only when disabled — see the note on PrimaryButton.
         disabled ? { opacity: 0.5 } : null,
         style,
       ]}
     >
-      {icon ? <Icon name={icon} size={16} color={tint} /> : null}
+      {/* Spinner in the button's own tint, taking the icon's slot. */}
+      {loading ? (
+        <ActivityIndicator size="small" color={tint} />
+      ) : icon ? (
+        <Icon name={icon} size={16} color={tint} />
+      ) : null}
       <Body style={[styles.secondaryLabel, { color: tint }]}>{label}</Body>
     </Pressable>
   );

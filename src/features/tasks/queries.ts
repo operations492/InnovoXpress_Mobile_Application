@@ -109,6 +109,8 @@ export interface CaptureArgs {
   signature: { uri: string; name: string; type: string };
   /** Who signed — required, and gated in the UI before the upload is attempted. */
   signedByName: string;
+  /** Pieces counted at this stop — confirmed with the driver before sending. */
+  itemCount: number;
   note?: string;
   idempotencyKey: string;
 }

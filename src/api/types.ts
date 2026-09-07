@@ -16,7 +16,13 @@ export type ConsignmentStatus =
   | 'AT_DELIVERY'
   | 'DELIVERED';
 
-export type TaskType = 'DELIVERY' | 'PICKUP';
+/**
+ * `PICKUP_AND_DELIVERY` is what a consignment in this system actually is — a
+ * collection followed by a drop. The other two predate it and are kept because
+ * an enum value cannot be removed without rewriting every row that used it, so
+ * all three still arrive from the API.
+ */
+export type TaskType = 'DELIVERY' | 'PICKUP' | 'PICKUP_AND_DELIVERY';
 export type Priority = 'NORMAL' | 'HIGH' | 'LOW';
 export type PackageType = 'BOX' | 'BOTTLE' | 'ENVELOPE' | 'PALLET' | 'OTHER';
 export type PodLeg = 'PICKUP' | 'DELIVERY';
@@ -97,9 +103,19 @@ export interface DriverTask {
   receiverCity: string;
   receiverNotes: string | null;
 
-  readyBy: string | null;
-  deliverBy: string | null;
+  /*
+   * The two ends of the job, and only those two — the list endpoint selects
+   * `pickupAfter` and `deliverBefore` and leaves the inner bounds of each window
+   * to the detail endpoint. Together they are the span the whole job has to fit
+   * inside, which is what a card needs to show.
+   *
+   * Never null: all four columns are NOT NULL on the server.
+   */
+  pickupAfter: string;
+  deliverBefore: string;
   generalNote: string | null;
+  /** Last write of any kind — assignment, a status step, a proof. Drives list order. */
+  updatedAt: string;
 
   items: TaskItemSummary[];
   proofs: { leg: PodLeg; capturedAt: string }[];
@@ -165,8 +181,15 @@ export interface TaskDetail {
   taskType: TaskType;
   sender: Sender;
   receiver: Receiver;
-  readyBy: string | null;
-  deliverBy: string | null;
+  /*
+   * Two real windows, which is the whole point of the four columns: "collect
+   * between 9 and 11, deliver between 13 and 17". The list endpoint sends only
+   * the outer pair; this one sends all of it.
+   */
+  pickupAfter: string;
+  pickupBefore: string;
+  deliverAfter: string;
+  deliverBefore: string;
   assignedAt: string | null;
   pickedUpAt: string | null;
   deliveredAt: string | null;
@@ -198,6 +221,8 @@ export interface Proof {
   capturedAt: string;
   /** Who signed: handed over on PICKUP, took delivery on DELIVERY. */
   signedByName: string | null;
+  /** Pieces the driver counted at this stop — not necessarily the order's total. */
+  itemCount: number | null;
   capturedByDriver: { id: string; name: string } | null;
   photo: ProofFile;
   signature: ProofFile;

@@ -1,6 +1,12 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import type { DriverTask } from '@/api/types';
-import { colorForStatus, STATUS_LABELS } from '@/features/tasks/statusFlow';
+import {
+  colorForStatus,
+  JOURNEY,
+  journeyPosition,
+  STATUS_LABELS,
+  TASK_TYPE_LABELS,
+} from '@/features/tasks/statusFlow';
 import { useNow } from '@/lib/clock';
 import { formatRelative, formatWindow, toNumber } from '@/lib/format';
 import { color, font, radius, shadow } from '@/theme/tokens';
@@ -17,11 +23,14 @@ import { Body, Mono, Small, Tiny } from './Text';
 export function TaskCard({ task, onPress }: { task: DriverTask; onPress: () => void }) {
   const now = useNow();
   const accent = colorForStatus(task.status);
+  const position = journeyPosition(task.status);
   const totalQty = task.items.reduce((sum, i) => sum + i.qty, 0);
   const totalKg = task.items.reduce((sum, i) => sum + (toNumber(i.weightKg) ?? 0), 0);
 
   // Late is the one thing worth shouting about on a list of otherwise equal rows.
-  const due = task.deliverBy ?? task.readyBy;
+  // `deliverBefore` is the deadline and is never null, so there is no fallback
+  // to pick any more.
+  const due = task.deliverBefore;
   const relative = formatRelative(due);
   // Read from the shared clock, not Date.now(): render must stay pure, and this
   // way a job that goes overdue while the list is open actually turns red.
@@ -36,7 +45,7 @@ export function TaskCard({ task, onPress }: { task: DriverTask; onPress: () => v
     >
       <View style={styles.head}>
         <Body style={styles.title} numberOfLines={1}>
-          {task.taskType === 'PICKUP' ? 'Pickup' : 'Pickup & Delivery'}
+          {TASK_TYPE_LABELS[task.taskType]}
         </Body>
 
         <View style={styles.status}>
@@ -46,6 +55,31 @@ export function TaskCard({ task, onPress }: { task: DriverTask; onPress: () => v
           </Tiny>
           <Icon name="chevron-right" size={16} color={color.faint} />
         </View>
+      </View>
+
+      {/*
+        Six segments, one per step of the job, filled up to where this one has
+        got to.
+
+        The status label above says what the job is doing; this says how far
+        through it is. They are not the same question, and a driver scanning six
+        cards for "which of these is nearly done" was previously having to
+        translate a phrase like "At pickup" into a position on a line they were
+        holding in their head.
+      */}
+      <View style={styles.rail} accessibilityLabel={`Step ${position.done + 1} of ${position.total}`}>
+        {JOURNEY.map((step, i) => (
+          <View
+            key={step.status}
+            style={[
+              styles.railSeg,
+              i < position.done ? { backgroundColor: accent } : null,
+              // The live one is dimmer than done but brighter than untouched, so
+              // the eye lands on the boundary rather than counting segments.
+              i === position.done ? { backgroundColor: color.primaryBorder } : null,
+            ]}
+          />
+        ))}
       </View>
 
       <View style={styles.rows}>
@@ -68,7 +102,7 @@ export function TaskCard({ task, onPress }: { task: DriverTask; onPress: () => v
         <View style={styles.meta}>
           <Icon name="clock" size={15} color={late ? color.dangerText : color.muted} />
           <Small style={[styles.metaText, late ? styles.late : null]} numberOfLines={1}>
-            {formatWindow(task.readyBy, task.deliverBy)}
+            {formatWindow(task.pickupAfter, task.deliverBefore)}
           </Small>
           {relative ? (
             <Tiny style={[styles.relative, late ? styles.late : null]}>{relative}</Tiny>
@@ -153,6 +187,9 @@ const styles = StyleSheet.create({
   status: { flexDirection: 'row', alignItems: 'center', gap: 6, maxWidth: '55%' },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
   statusLabel: { fontFamily: font.bold, fontSize: 12.5, flexShrink: 1 },
+
+  rail: { flexDirection: 'row', gap: 3, paddingHorizontal: 15, paddingTop: 11 },
+  railSeg: { flex: 1, height: 3, borderRadius: 2, backgroundColor: color.line },
 
   rows: { padding: 15, gap: 0 },
   leg: { flexDirection: 'row', gap: 12, paddingVertical: 2 },

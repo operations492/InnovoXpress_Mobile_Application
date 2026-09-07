@@ -84,6 +84,16 @@ export interface CaptureProofInput {
   signature: { uri: string; name: string; type: string };
   /** The person who signed. Its own field now, not folded into the note. */
   signedByName: string;
+  /**
+   * Pieces counted at this stop — both legs. Two counts against one order is
+   * what turns "something went missing" into "it went missing between these two
+   * stops"; a single count at pickup can only ever say the sender was short.
+   *
+   * Sent as the driver counted them even when that disagrees with the order:
+   * the discrepancy is the point, and the screen has already made them confirm
+   * it.
+   */
+  itemCount: number;
   note?: string;
   /**
    * Makes a retry safe. If the response to the first attempt was lost — the
@@ -147,6 +157,7 @@ export async function captureProof({
   photo,
   signature,
   signedByName,
+  itemCount,
   note,
   idempotencyKey,
 }: CaptureProofInput) {
@@ -156,6 +167,8 @@ export async function captureProof({
   form.append('photo', await toFilePart(photo));
   form.append('signature', await toFilePart(signature));
   form.append('signedByName', signedByName);
+  // Multipart carries strings only; the server's Zod schema coerces it back.
+  form.append('itemCount', String(itemCount));
   if (note) form.append('note', note);
 
   return api.upload<{ proof: Proof[] }>(

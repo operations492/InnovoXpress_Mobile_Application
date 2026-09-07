@@ -9,7 +9,7 @@ import { Body, Display, Small, Tiny } from '@/components/Text';
 import { useConversations } from '@/features/chat/queries';
 import { useChatInbox } from '@/features/chat/realtime';
 import { useMe } from '@/features/tasks/queries';
-import { formatChatStamp, initials } from '@/lib/format';
+import { formatEventStamp, initials } from '@/lib/format';
 import { color, font, radius } from '@/theme/tokens';
 
 /**
@@ -100,7 +100,7 @@ export default function ChatListScreen() {
                         <Tiny
                           style={[styles.when, c.unreadCount > 0 ? styles.whenUnread : null]}
                         >
-                          {formatChatStamp(c.lastMessageAt)}
+                          {formatEventStamp(c.lastMessageAt)}
                         </Tiny>
                       ) : null}
                     </View>

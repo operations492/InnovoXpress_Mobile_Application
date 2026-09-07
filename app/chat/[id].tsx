@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   Pressable,
   StyleSheet,
@@ -14,6 +13,7 @@ import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-re
 import * as ImagePicker from 'expo-image-picker';
 import { File as FsFile } from 'expo-file-system';
 
+import { showDialog } from '@/components/Dialog';
 import { Icon } from '@/components/Icon';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { ErrorState, LoadingState } from '@/components/States';
@@ -211,10 +211,11 @@ export default function ChatThreadScreen() {
      */
     const size = asset.fileSize ?? sizeOf(asset.uri);
     if (size !== null && size > MAX_ATTACHMENT_BYTES) {
-      Alert.alert(
-        'Photo is too large',
-        `That photo is ${formatBytes(size)}. The limit is ${formatBytes(MAX_ATTACHMENT_BYTES)} — take a new one, or pick a smaller file.`,
-      );
+      void showDialog({
+        title: 'Photo is too large',
+        tone: 'warn',
+        message: `That photo is ${formatBytes(size)}. The limit is ${formatBytes(MAX_ATTACHMENT_BYTES)} — take a new one, or pick a smaller file.`,
+      });
       return;
     }
 
@@ -243,7 +244,11 @@ export default function ChatThreadScreen() {
         onSuccess: () => setPending((p) => ({ ...p, [clientMessageId]: 'sent' })),
         onError: () => {
           setPending((p) => ({ ...p, [clientMessageId]: 'failed' }));
-          Alert.alert('Photo not sent', 'Check your signal and try again.');
+          void showDialog({
+            title: 'Photo not sent',
+            tone: 'danger',
+            message: 'Check your signal and try again.',
+          });
         },
       });
     },
@@ -259,10 +264,12 @@ export default function ChatThreadScreen() {
   const takePhoto = useCallback(async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert(
-        'The camera is switched off',
-        'Innovo Xpress needs camera access to take a photo for dispatch.',
-      );
+      void showDialog({
+        title: 'The camera is switched off',
+        tone: 'warn',
+        icon: 'lock',
+        message: 'Innovo Xpress needs camera access to take a photo for dispatch.',
+      });
       return;
     }
     sendPicked(await ImagePicker.launchCameraAsync(IMAGE_OPTIONS));
@@ -271,22 +278,24 @@ export default function ChatThreadScreen() {
   const choosePhoto = useCallback(async () => {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert(
-        'Photos are switched off',
-        'Innovo Xpress needs access to your photos to send one to dispatch.',
-      );
+      void showDialog({
+        title: 'Photos are switched off',
+        tone: 'warn',
+        icon: 'lock',
+        message: 'Innovo Xpress needs access to your photos to send one to dispatch.',
+      });
       return;
     }
     sendPicked(await ImagePicker.launchImageLibraryAsync(IMAGE_OPTIONS));
   }, [IMAGE_OPTIONS, sendPicked]);
 
   /**
-   * A small menu at the paperclip, not a system dialog.
+   * A small menu at the paperclip, not a centred dialog.
    *
-   * `Alert` centres a modal over the whole screen for a two-option choice, which
-   * on Android is an unstyled box that belongs to the OS rather than the app —
-   * and it appears nowhere near the control that opened it. Anchoring the choice
-   * to the button keeps the driver's eye and thumb where they already were.
+   * A modal over the whole screen for a two-option choice appears nowhere near
+   * the control that opened it. Anchoring the choice to the button keeps the
+   * driver's eye and thumb where they already were — which is why this stayed a
+   * popover even once `showDialog` gave centred dialogs the app's own styling.
    */
   const [attachOpen, setAttachOpen] = useState(false);
 

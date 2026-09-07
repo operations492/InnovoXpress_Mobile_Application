@@ -1,5 +1,6 @@
 import { Tabs } from 'expo-router';
-import { Platform, StyleSheet, View, type ColorValue } from 'react-native';
+import { StyleSheet, View, type ColorValue } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Feather from '@expo/vector-icons/Feather';
 import { useConversations } from '@/features/chat/queries';
 import { color, font, radius } from '@/theme/tokens';
@@ -23,13 +24,28 @@ export default function TabsLayout() {
   const { data: chat } = useConversations();
   const unread = chat?.meta.totalUnread ?? 0;
 
+  /*
+   * The bar is sized from the device's real bottom inset, not from a guess.
+   *
+   * A flat `Platform.OS === 'ios' ? 84 : 68` is wrong on both halves of the iOS
+   * range at once: an iPhone SE reports an inset of 0 and gets 26pt of dead
+   * space under the labels, while a device with a home indicator reports 34 and
+   * has its labels sat under it. Android is not uniform either — a gesture-nav
+   * phone has an inset a three-button one does not.
+   *
+   * `BASE` is the bar's own content height; the inset is added to it, which is
+   * how every system tab bar is built.
+   */
+  const insets = useSafeAreaInsets();
+  const bottom = Math.max(insets.bottom, 10);
+
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: color.primary,
         tabBarInactiveTintColor: color.muted,
-        tabBarStyle: styles.bar,
+        tabBarStyle: [styles.bar, { height: BASE_BAR + bottom, paddingBottom: bottom }],
         tabBarLabelStyle: styles.label,
         tabBarItemStyle: styles.item,
         // 44pt is the minimum comfortable target, and this is tapped with gloves
@@ -107,14 +123,15 @@ function TabIcon({
   );
 }
 
+/** The bar's own content height — icon pill plus label. The inset is added on top. */
+const BASE_BAR = 58;
+
 const styles = StyleSheet.create({
   bar: {
     backgroundColor: color.surface,
     borderTopWidth: 1,
     borderTopColor: color.line,
-    height: Platform.OS === 'ios' ? 84 : 68,
     paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 26 : 10,
   },
   item: { paddingVertical: 2 },
   badge: {

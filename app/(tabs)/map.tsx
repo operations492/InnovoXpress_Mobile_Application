@@ -3,13 +3,7 @@ import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQueries } from '@tanstack/react-query';
-import { MapView, Marker, PROVIDER_DEFAULT, type Region } from '@/components/maps';
-import { MapPlaceholder } from '@/components/MapPlaceholder';
-import {
-  MAPS_UNCONFIGURED_DETAIL,
-  MAPS_UNCONFIGURED_TITLE,
-  mapsConfigured,
-} from '@/lib/mapsConfig';
+import { MapView, Marker, PROVIDER_DEFAULT, type MapViewHandle, type Region } from '@/components/maps';
 
 import { getTask } from '@/api/endpoints';
 import type { TaskDetail } from '@/api/types';
@@ -32,7 +26,7 @@ import { color, font, radius, shadow } from '@/theme/tokens';
 export default function MapScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const mapRef = useRef<MapView>(null);
+  const mapRef = useRef<MapViewHandle>(null);
 
   const { data: tasks, isLoading: listLoading, isError, error, refetch } = useMyTasks(false);
 
@@ -144,35 +138,25 @@ export default function MapScreen() {
     <View style={styles.screen}>
       {header}
 
-      {mapsConfigured ? (
-        <MapView
-          ref={mapRef}
-          provider={PROVIDER_DEFAULT}
-          style={styles.map}
-          initialRegion={region}
-          showsUserLocation
-          showsMyLocationButton
-        >
-          {stops.map((stop) => (
-            <Marker
-              key={stop.id}
-              coordinate={stop.coordinate}
-              title={stop.name}
-              description={`${stop.orderNo} · ${STATUS_LABELS[stop.status]}`}
-              pinColor={colorForStatus(stop.status)}
-              onCalloutPress={() => router.push(`/task/${stop.id}`)}
-            />
-          ))}
-        </MapView>
-      ) : (
-        // Without a key the native view throws on inflate and takes the screen
-        // down; the stop strip below still works, so only the map is dropped.
-        <MapPlaceholder
-          style={styles.map}
-          title={MAPS_UNCONFIGURED_TITLE}
-          detail={MAPS_UNCONFIGURED_DETAIL}
-        />
-      )}
+      <MapView
+        ref={mapRef}
+        provider={PROVIDER_DEFAULT}
+        style={styles.map}
+        initialRegion={region}
+        showsUserLocation
+        showsMyLocationButton
+      >
+        {stops.map((stop) => (
+          <Marker
+            key={stop.id}
+            coordinate={stop.coordinate}
+            title={stop.name}
+            description={`${stop.orderNo} · ${STATUS_LABELS[stop.status]}`}
+            pinColor={colorForStatus(stop.status)}
+            onCalloutPress={() => router.push(`/task/${stop.id}`)}
+          />
+        ))}
+      </MapView>
 
       <ScrollView
         horizontal

@@ -110,18 +110,85 @@ export function formatBytes(bytes: number | null | undefined): string {
 }
 
 /**
- * When a message arrived, in the shorthand every messaging app uses.
+ * When something happened, in the shorthand every messaging app uses. Used for
+ * both chat messages and the steps of a job.
  *
  * Deliberately NOT `formatRelative`, which answers a different question: that
  * one is for delivery windows, where the interesting fact is whether a deadline
- * has passed, so it renders "in 4 min" and "28 min late". Pointed at a chat
- * timestamp it claims the message is late, which means nothing.
+ * has passed, so it renders "in 4 min" and "28 min late". Pointed at something
+ * that has already happened it claims the past is late, which means nothing.
  *
  * The scale coarsens with age because that is how the information is used:
  * today is a clock time, this week is a weekday, older is a date. Nobody needs
  * "9,412 min" for any of them.
  */
-export function formatChatStamp(iso: string | null | undefined): string {
+/**
+ * The calendar day something happened on, in the device's own timezone.
+ *
+ * Used as a grouping key, so it must be LOCAL rather than the ISO date: a
+ * delivery at 01:00 in Karachi is `…T20:00Z` the previous day, and grouping on
+ * the UTC date would file a driver's early-morning work under yesterday.
+ */
+export function dayKey(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+const DAY_NAME = new Intl.DateTimeFormat('en-GB', { weekday: 'long' });
+const DAY_DATE = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long' });
+const DAY_DATE_YEAR = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+/** "Today" · "Yesterday" · "Tuesday" · "3 September" · "3 September 2025". */
+export function formatDayLabel(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return '';
+
+  const now = new Date();
+  const key = dayKey(iso);
+  if (key === dayKey(now.toISOString())) return 'Today';
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (key === dayKey(yesterday.toISOString())) return 'Yesterday';
+
+  // Named days only while the name is unambiguous. Past a week, "Tuesday" makes
+  // the reader work out which Tuesday, so the date is kinder.
+  const days = Math.floor((now.getTime() - then.getTime()) / 86_400_000);
+  if (days < 7) return DAY_NAME.format(then);
+
+  return then.getFullYear() === now.getFullYear()
+    ? DAY_DATE.format(then)
+    : DAY_DATE_YEAR.format(then);
+}
+
+/**
+ * How long something took, at the coarseness anyone actually reads.
+ *
+ * Minutes below an hour, hours and minutes above it, and days beyond that —
+ * nobody has ever wanted "487 min".
+ */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return 'under a minute';
+  if (minutes < 60) return `${minutes} min`;
+
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours < 24) return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
+export function formatEventStamp(iso: string | null | undefined): string {
   if (!iso) return '';
   const then = new Date(iso);
   const ms = then.getTime();

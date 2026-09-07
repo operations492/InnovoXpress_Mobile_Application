@@ -1,34 +1,39 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { MapView, Marker, Polyline, PROVIDER_DEFAULT, type Region } from '@/components/maps';
-import { MapPlaceholder } from '@/components/MapPlaceholder';
 import {
-  MAPS_UNCONFIGURED_DETAIL,
-  MAPS_UNCONFIGURED_TITLE,
-  mapsConfigured,
-} from '@/lib/mapsConfig';
+  MapView,
+  Marker,
+  Polyline,
+  PROVIDER_DEFAULT,
+  type MapViewHandle,
+  type Region,
+} from '@/components/maps';
 
 import { ApiError } from '@/api/client';
 import type { TaskDetail } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
 import { Card } from '@/components/Card';
+import { showDialog } from '@/components/Dialog';
 import { Chip } from '@/components/Chip';
 import { DetailRow } from '@/components/DetailRow';
 import { Icon } from '@/components/Icon';
+import { JourneyStepper } from '@/components/JourneyStepper';
 import { LegCard } from '@/components/LegCard';
 import { ErrorState, LoadingState, messageFor } from '@/components/States';
-import { Body, SectionLabel, Small, Tiny } from '@/components/Text';
+import { Body, Mono, SectionLabel, Small, Tiny } from '@/components/Text';
 import { setActiveConsignment } from '@/features/location/buffer';
 import {
   activeLeg,
   colorForStatus,
   isDelivered,
   isPickupDone,
+  journeyPosition,
   nextActionFor,
   planFor,
   STATUS_LABELS,
+  TASK_TYPE_LABELS,
 } from '@/features/tasks/statusFlow';
 import { useChangeStatus, useTask } from '@/features/tasks/queries';
 import { formatAddress, formatStamp, formatWindow } from '@/lib/format';
@@ -64,6 +69,9 @@ export default function TaskInfoScreen() {
     };
   }, [id]);
 
+  // True while a finger is down on the map — see the ScrollView note below.
+  const [mapHeld, setMapHeld] = useState(false);
+
   const plan = useMemo(() => (task ? planFor(nextActionFor(task.status)) : null), [task]);
 
   const advance = useCallback(() => {
@@ -84,10 +92,12 @@ export default function TaskInfoScreen() {
         { status: plan.target },
         {
           onError: (e) => {
-            Alert.alert(
-              e instanceof ApiError && e.isConflict ? 'This job moved on' : 'Could not update',
-              messageFor(e),
-            );
+            const conflict = e instanceof ApiError && e.isConflict;
+            void showDialog({
+              title: conflict ? 'This job moved on' : 'Could not update',
+              tone: conflict ? 'warn' : 'danger',
+              message: messageFor(e),
+            });
           },
         },
       );
@@ -112,6 +122,7 @@ export default function TaskInfoScreen() {
 
   const pickupDone = isPickupDone(task.status);
   const delivered = isDelivered(task.status);
+  const position = journeyPosition(task.status);
   const leg = activeLeg(task.status);
   const focus = leg === 'PICKUP' ? task.sender : task.receiver;
 
@@ -119,6 +130,16 @@ export default function TaskInfoScreen() {
     <View style={styles.screen}>
       <ScrollView
         contentContainerStyle={styles.scroll}
+        /*
+         * The page stops scrolling while a finger is on the map.
+         *
+         * A pannable map inside a vertical ScrollView is a gesture fight the
+         * page always wins: drag to move the map north and the ScrollView reads
+         * it as a scroll, so the map never moves. Suspending the parent for the
+         * duration of the touch hands the gesture to the map, and releasing it
+         * on touch end means the rest of the screen scrolls exactly as before.
+         */
+        scrollEnabled={!mapHeld}
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
@@ -129,9 +150,36 @@ export default function TaskInfoScreen() {
           />
         }
       >
-        <TaskMap task={task} />
+        <View
+          onTouchStart={() => setMapHeld(true)}
+          onTouchEnd={() => setMapHeld(false)}
+          onTouchCancel={() => setMapHeld(false)}
+        >
+          <TaskMap task={task} />
+        </View>
 
-        {/* Quick actions target whichever end the driver is heading to now. */}
+        {/*
+          Quick actions target whichever end the driver is heading to now — the
+          sender before the pickup proof, the receiver after it.
+
+          The caption above them is not decoration. The same four buttons dial
+          two different people depending on how far through the job you are, and
+          a driver who taps Call needs to know which one is about to ring before
+          it does, not after.
+        */}
+        <View style={styles.quickHead}>
+          <Icon
+            name={leg === 'PICKUP' ? 'package' : 'map-pin'}
+            size={13}
+            color={color.primary}
+          />
+          <Tiny style={styles.quickHeadText} numberOfLines={1}>
+            {leg === 'PICKUP' ? 'Pickup contact' : 'Delivery contact'} ·{' '}
+            <Tiny style={styles.quickHeadName}>{focus.name}</Tiny>
+          </Tiny>
+          {focus.phone ? <Mono style={styles.quickPhone}>{focus.phone}</Mono> : null}
+        </View>
+
         <View style={styles.quickRow}>
           <ActionTile
             label="Navigate"
@@ -149,21 +197,58 @@ export default function TaskInfoScreen() {
             label="Call"
             icon="phone"
             disabled={!focus.phone}
-            onPress={() => callNumber(focus.phone)}
+            onPress={() => callNumber(focus.phone, focus.name)}
           />
           <ActionTile
             label="SMS"
             icon="message-square"
             disabled={!focus.phone}
-            onPress={() => textNumber(focus.phone)}
+            onPress={() => textNumber(focus.phone, focus.name)}
           />
-          <ActionTile
-            label="Email"
-            icon="mail"
-            disabled={!focus.email}
-            onPress={() => sendEmail(focus.email, `Innovo Xpress ${task.orderNo}`)}
-          />
+          {/*
+            Shown only when there is an address to write to, rather than greyed
+            out on every job.
+
+            No order in this system carries one — `senderEmail` and
+            `receiverEmail` are null on every row, because nothing in the console
+            collects them — so a permanently disabled fourth tile was teaching
+            drivers that a quarter of this toolbar does not work. If dispatch
+            ever starts capturing addresses, the button reappears on its own.
+          */}
+          {focus.email ? (
+            <ActionTile
+              label="Email"
+              icon="mail"
+              onPress={() => sendEmail(focus.email, `Innovo Xpress ${task.orderNo}`)}
+            />
+          ) : null}
         </View>
+
+        {/*
+          Said once, plainly, instead of leaving three greyed-out tiles to be
+          interpreted. A missing number is a data problem for dispatch to fix,
+          not a fault the driver should be left guessing at.
+        */}
+        {!focus.phone ? (
+          <Tiny style={styles.quickMissing}>
+            This order has no phone number for {focus.name}. Message dispatch in Chat if you need
+            to reach them.
+          </Tiny>
+        ) : null}
+
+        {/*
+          Directly under the toolbar, above the addresses. It is the answer to
+          "where am I on this one", and a driver who has to scroll past two
+          address cards to find that out is back to reading a status chip.
+        */}
+        <JourneyStepper
+          status={task.status}
+          timeline={task.timeline}
+          plan={plan}
+          busy={changeStatus.isPending}
+          onAdvance={advance}
+          onViewProof={(podLeg) => router.push(`/task/${task.id}/complete?leg=${podLeg}&view=1`)}
+        />
 
         <View style={styles.section}>
           <LegCard
@@ -207,72 +292,76 @@ export default function TaskInfoScreen() {
         <SectionLabel style={styles.sectionLabel}>Job details</SectionLabel>
 
         <Card style={styles.detailCard}>
+          {/*
+            Two rows, not one span. The detail endpoint carries all four bounds,
+            and "collect between 9 and 11" is a different instruction from "be
+            done by 17:00" — collapsing them into one line was the best the old
+            two-column model could do, not what a driver wants to read.
+          */}
+          <DetailRow
+            icon="package"
+            label="Pickup window"
+            value={formatWindow(task.pickupAfter, task.pickupBefore)}
+            mono
+          />
           <DetailRow
             icon="clock"
-            value={formatWindow(task.readyBy, task.deliverBy)}
+            label="Delivery window"
+            value={formatWindow(task.deliverAfter, task.deliverBefore)}
             mono
-            sub={task.priority !== 'NORMAL' ? `${task.priority} priority` : undefined}
           />
 
           <DetailRow icon="package" accent>
             <View style={styles.chips}>
               <Chip label={STATUS_LABELS[task.status]} accent={colorForStatus(task.status)} dot />
-              <Chip
-                label={task.taskType === 'PICKUP' ? 'Pickup' : 'Pickup & Delivery'}
-                tone="danger"
-              />
-              <Chip label={task.orderNo} tone="mono" />
+              <Chip label={TASK_TYPE_LABELS[task.taskType]} tone="neutral" />
+              {task.priority !== 'NORMAL' ? (
+                <Chip
+                  label={`${task.priority} priority`}
+                  tone={task.priority === 'HIGH' ? 'danger' : 'neutral'}
+                />
+              ) : null}
             </View>
           </DetailRow>
 
+          {/*
+            The count leads, because it is the number the driver is held to at
+            both stops — the POD screen will not close a leg until their own
+            count matches it. Weight is context; the quantity is the obligation.
+          */}
           <DetailRow
             icon="box"
-            value={`Quantity: ${task.totals.totalQty} · Weight: ${task.totals.totalWeightKg} kg`}
-            sub="Tap to view package list"
+            label="Items to hand over"
+            value={`${task.totals.totalQty} item${task.totals.totalQty === 1 ? '' : 's'}${
+              task.totals.totalWeightKg > 0 ? ` · ${task.totals.totalWeightKg} kg` : ''
+            }`}
+            sub="Tap to view the package list"
             onPress={() => router.push(`/task/${task.id}/items`)}
           />
 
-          {/*
-            Both proofs are mandatory on this backend — the POD endpoint rejects a
-            capture that is missing either file — so this is a statement of fact,
-            not a per-order setting.
-          */}
-          <DetailRow icon="camera" label="Required at each stop">
-            <View style={styles.chips}>
-              <Chip label="Signature" tone="neutral" />
-              <Chip label="Photo" tone="neutral" />
-            </View>
-          </DetailRow>
+          {task.client?.name ? (
+            <DetailRow icon="briefcase" label="Client" value={task.client.name} />
+          ) : null}
+
+          <DetailRow icon="link" label="Order number" value={task.orderNo} mono />
 
           {task.clientReference ? (
-            <DetailRow icon="link" label="External ID" value={task.clientReference} mono />
+            <DetailRow icon="hash" label="Client reference" value={task.clientReference} mono />
           ) : null}
 
           {task.generalNote ? (
-            <DetailRow icon="file-text" label="Task description" value={task.generalNote} last />
+            <DetailRow icon="file-text" label="Instructions for this job" value={task.generalNote} last />
           ) : (
             <DetailRow icon="user" label="Assigned to" value={task.driver?.name ?? '—'} last />
           )}
         </Card>
 
-        {task.proofs.length > 0 ? (
-          <>
-            <SectionLabel style={styles.sectionLabel}>Proof captured</SectionLabel>
-            <Card style={styles.detailCard}>
-              {task.proofs.map((p, i) => (
-                <DetailRow
-                  key={p.leg}
-                  icon="check-circle"
-                  label={p.leg === 'PICKUP' ? 'Pickup proof' : 'Delivery proof'}
-                  value={formatStamp(p.capturedAt)}
-                  mono
-                  last={i === task.proofs.length - 1}
-                  onPress={() => router.push(`/task/${task.id}/complete?leg=${p.leg}&view=1`)}
-                />
-              ))}
-            </Card>
-          </>
-        ) : null}
+        {/*
+          There was a "Proof captured" card here, listing each leg's proof with a
+          link to view it. The stepper now shows both, stamped and in position,
+          well above this point — and two tap targets for one thing on one screen
+          is how a driver ends up unsure which of them is the real record.
+        */}
 
         <SectionLabel style={styles.sectionLabel}>History</SectionLabel>
         <Card style={styles.detailCard}>
@@ -317,12 +406,27 @@ export default function TaskInfoScreen() {
 
       <View style={[styles.actionBar, { paddingBottom: insets.bottom + 12 }]}>
         {plan ? (
-          <PrimaryButton
-            label={plan.kind === 'none' ? 'Back to my tasks' : plan.label}
-            icon={plan.kind === 'proof' ? 'camera' : plan.kind === 'none' ? 'check' : 'arrow-right'}
-            loading={changeStatus.isPending}
-            onPress={advance}
-          />
+          <>
+            {/*
+              The same words as the live row in the stepper, so the button and
+              the list read as one control rather than as two things to
+              reconcile. Without it the driver has to scroll up to find out what
+              the button is about to do to their job.
+            */}
+            {plan.kind !== 'none' && position.current ? (
+              <Tiny style={styles.actionStep}>
+                Step {position.done + 1} of {position.total} · {position.current.label}
+              </Tiny>
+            ) : null}
+            <PrimaryButton
+              label={plan.kind === 'none' ? 'Back to my tasks' : plan.label}
+              icon={
+                plan.kind === 'proof' ? 'camera' : plan.kind === 'none' ? 'check' : 'arrow-right'
+              }
+              loading={changeStatus.isPending}
+              onPress={advance}
+            />
+          </>
         ) : null}
       </View>
     </View>
@@ -337,7 +441,7 @@ export default function TaskInfoScreen() {
  * map centred on null island is worse than no map at all.
  */
 function TaskMap({ task }: { task: TaskDetail }) {
-  const ref = useRef<MapView>(null);
+  const ref = useRef<MapViewHandle>(null);
 
   // Memoised because `region` below depends on them: a fresh object literal on
   // every render would make that useMemo recompute every time and memoise
@@ -392,19 +496,6 @@ function TaskMap({ task }: { task: TaskDetail }) {
     );
   }
 
-  // Without a key the native view throws on inflate and takes the whole task
-  // screen down — addresses, proof capture and status all go with it. Dropping
-  // just the map keeps the screen usable.
-  if (!mapsConfigured) {
-    return (
-      <MapPlaceholder
-        style={styles.map}
-        title={MAPS_UNCONFIGURED_TITLE}
-        detail={MAPS_UNCONFIGURED_DETAIL}
-      />
-    );
-  }
-
   return (
     <View style={styles.map}>
       <MapView
@@ -415,8 +506,8 @@ function TaskMap({ task }: { task: TaskDetail }) {
         showsUserLocation
         showsMyLocationButton={false}
         toolbarEnabled={false}
-        scrollEnabled={false}
-        zoomEnabled={false}
+        scrollEnabled
+        zoomEnabled
         rotateEnabled={false}
         pitchEnabled={false}
       >
@@ -453,6 +544,22 @@ function TaskMap({ task }: { task: TaskDetail }) {
           {task.receiver.city} · {task.taskType === 'PICKUP' ? 'pickup' : 'drop'}
         </Tiny>
       </View>
+
+      {/*
+        Recenter, because pan and zoom without a way back is a trap: three
+        drags and both pins are off screen with nothing to say which direction
+        they went. `region` is memoised, so this always returns to the framing
+        the screen opened with.
+      */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Recentre the map on both stops"
+        onPress={() => ref.current?.animateToRegion(region, 300)}
+        style={({ pressed }) => [styles.mapRecenter, pressed ? { opacity: 0.75 } : null]}
+        hitSlop={6}
+      >
+        <Icon name="crosshair" size={17} color={color.ink} />
+      </Pressable>
     </View>
   );
 }
@@ -479,7 +586,24 @@ const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: color.bgCanvas },
   scroll: { paddingBottom: 20 },
 
-  map: { height: 196, backgroundColor: '#E4E7EC' },
+  /*
+   * Taller than the mockup's 196. The map is the first thing a driver checks to
+   * orient themselves, and at 196 the two pins and the line between them sat in
+   * a letterbox with no useful context around either end.
+   */
+  map: { height: 260, backgroundColor: '#E4E7EC' },
+  mapRecenter: {
+    position: 'absolute',
+    right: 12,
+    top: 12,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.float,
+  },
   mapLabel: {
     position: 'absolute',
     left: 14,
@@ -513,7 +637,28 @@ const styles = StyleSheet.create({
   floatBack: { left: 16 },
   floatMenu: { right: 16 },
 
-  quickRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingTop: 14 },
+  quickHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 18,
+    paddingTop: 14,
+  },
+  quickHeadText: { flex: 1, fontSize: 11.5, color: color.muted },
+  quickHeadName: { fontSize: 11.5, color: color.ink, fontFamily: font.bold },
+  quickPhone: { fontFamily: font.mono, fontSize: 11.5, color: color.primary },
+  quickMissing: {
+    marginHorizontal: 14,
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 11,
+    backgroundColor: color.warnSoft,
+    color: color.warn,
+    fontSize: 11.5,
+    lineHeight: 16,
+  },
+
+  quickRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingTop: 9 },
   section: { paddingHorizontal: 14, paddingTop: 12, gap: 12 },
   sectionLabel: { marginHorizontal: 18, marginTop: 18, marginBottom: 8 },
   detailCard: { marginHorizontal: 14 },
@@ -540,5 +685,12 @@ const styles = StyleSheet.create({
     borderTopColor: color.line,
     paddingHorizontal: 14,
     paddingTop: 12,
+  },
+  actionStep: {
+    textAlign: 'center',
+    fontFamily: font.mono,
+    fontSize: 11,
+    color: color.muted,
+    marginBottom: 8,
   },
 });

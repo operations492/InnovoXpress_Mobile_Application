@@ -43,3 +43,5 @@ yarn-error.*
 # local env
 .env
 .env.local
+
+map.osm

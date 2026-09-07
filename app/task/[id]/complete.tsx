@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -16,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApiError } from '@/api/client';
 import type { PodLeg } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
+import { showDialog } from '@/components/Dialog';
 import { Icon } from '@/components/Icon';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SignaturePad } from '@/components/SignaturePad';
@@ -67,6 +67,12 @@ export default function CompleteTaskScreen() {
    * the task arrived late, could overwrite something already typed.
    */
   const [typedReceivedBy, setTypedReceivedBy] = useState<string | null>(null);
+  /*
+   * Held as text, not a number. A numeric state would have to represent "the
+   * field is empty" as 0 or NaN, and both of those are counts the driver could
+   * plausibly be part-way through typing.
+   */
+  const [countText, setCountText] = useState('');
   const [note, setNote] = useState('');
   const [padOpen, setPadOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -100,7 +106,39 @@ export default function CompleteTaskScreen() {
    * trims it anyway — better to fail here than after the upload.
    */
   const signedByName = receivedBy.trim();
-  const ready = Boolean(photo && signature && signedByName);
+
+  /*
+   * `totalQty` — the sum of every line's quantity — not `itemCount`, which
+   * counts lines. A driver counts parcels on a trolley, so three boxes of the
+   * same SKU is three, not one. Zero means the order lists no items at all,
+   * which leaves nothing to compare against.
+   */
+  /*
+   * The expected total is NEVER shown on this screen, and that is the point.
+   *
+   * A driver who can see "the order lists 3" before typing has been handed the
+   * answer, and the field stops being a count and becomes a confirmation — which
+   * is exactly the failure it exists to catch. The number is held here only to
+   * decide whether the save is allowed; the UI says "does not match" and nothing
+   * more.
+   */
+  const expected = task?.totals.totalQty ?? 0;
+  const counted = /^\d+$/.test(countText) ? Number(countText) : null;
+  const mismatch = expected > 0 && counted !== null && counted !== expected;
+
+  /*
+   * The count has to match before the stop can be closed.
+   *
+   * Combined with not showing the expected total, that makes this a real count:
+   * the driver cannot copy a number off the screen, and cannot proceed on a
+   * number that disagrees with the order. The screen says only that it does not
+   * match, never what it should be.
+   *
+   * `expected > 0` guards the case of an order with no items, where there is
+   * nothing to match against and any positive count is accepted.
+   */
+  const countOk = counted !== null && counted > 0 && (expected === 0 || counted === expected);
+  const ready = Boolean(photo && signature && signedByName) && countOk;
 
   const onSignature = useCallback(
     (dataUrl: string) => {
@@ -112,14 +150,18 @@ export default function CompleteTaskScreen() {
         });
         setPadOpen(false);
       } catch (e) {
-        Alert.alert('Signature not saved', e instanceof Error ? e.message : 'Please try again.');
+        void showDialog({
+          title: 'Signature not saved',
+          tone: 'danger',
+          message: e instanceof Error ? e.message : 'Please try again.',
+        });
       }
     },
     [],
   );
 
-  const save = useCallback(async () => {
-    if (!ready || !task || !photo || !signature || busy) return;
+  const send = useCallback(async () => {
+    if (!ready || !task || !photo || !signature || counted === null || busy) return;
 
     setBusy(true);
     try {
@@ -128,6 +170,7 @@ export default function CompleteTaskScreen() {
         photo,
         signature,
         signedByName,
+        itemCount: counted,
         note: note.trim() || undefined,
         idempotencyKey,
       });
@@ -139,17 +182,72 @@ export default function CompleteTaskScreen() {
       router.replace(`/task/${task.id}`);
     } catch (e) {
       const conflict = e instanceof ApiError && e.isConflict;
-      Alert.alert(
-        conflict ? 'This stop is already closed' : 'Could not save the proof',
-        messageFor(e),
-        conflict
-          ? [{ text: 'Back to job', onPress: () => router.replace(`/task/${task.id}`) }]
-          : [{ text: 'OK' }],
-      );
+      void showDialog({
+        title: conflict ? 'This stop is already closed' : 'Could not save the proof',
+        tone: conflict ? 'warn' : 'danger',
+        message: messageFor(e),
+        actions: conflict
+          ? [
+              {
+                label: 'Back to job',
+                style: 'primary',
+                onPress: () => router.replace(`/task/${task.id}`),
+              },
+            ]
+          : undefined,
+      });
     } finally {
       setBusy(false);
     }
-  }, [ready, task, photo, signature, busy, capture, leg, signedByName, note, idempotencyKey, router]);
+  }, [
+    ready,
+    task,
+    photo,
+    signature,
+    busy,
+    capture,
+    leg,
+    signedByName,
+    counted,
+    note,
+    idempotencyKey,
+    router,
+  ]);
+
+  /**
+   * The count is confirmed out loud even though it already matches.
+   *
+   * A number typed into a box is the easiest thing on this screen to get wrong —
+   * it costs one keystroke and looks identical whether it is right or not, while
+   * the photo and the signature are self-evidently what they are. And it is the
+   * figure the consignment is reconciled against afterwards, at both ends: a
+   * count taken at pickup and again at delivery is what turns "something went
+   * missing" into "it went missing between these two stops".
+   *
+   * A mismatch never reaches here — the save button stays disabled and the field
+   * shows the error instead. This dialog is the last look before a stop closes
+   * for good.
+   */
+  const confirmAndSend = useCallback(() => {
+    if (!ready || busy || counted === null) return;
+
+    const pieces = (n: number) => `${n} item${n === 1 ? '' : 's'}`;
+    const verb = leg === 'PICKUP' ? 'picked up' : 'delivered';
+    const finish = leg === 'PICKUP' ? 'Yes, complete pickup' : 'Yes, complete delivery';
+
+    void showDialog({
+      title: 'Confirm item count',
+      tone: 'info',
+      icon: 'package',
+      message:
+        `Are you sure you ${verb} ${pieces(counted)}? This matches the order, and it cannot be ` +
+        'changed from the app once the proof is saved.',
+      actions: [
+        { label: finish, style: 'primary', onPress: () => void send() },
+        { label: 'Count again', style: 'cancel' },
+      ],
+    });
+  }, [ready, busy, counted, leg, send]);
 
   if (isLoading) {
     return (
@@ -201,6 +299,46 @@ export default function CompleteTaskScreen() {
             style={styles.input}
             editable={!busy}
           />
+        </View>
+
+        <View style={styles.field}>
+          <View style={styles.labelRow}>
+            <Tiny style={styles.label}>
+              {leg === 'PICKUP' ? 'Number of items picked up' : 'Number of items delivered'}
+            </Tiny>
+          </View>
+          <TextInput
+            value={countText}
+            // Stripped rather than merely filtered: a numeric keyboard still
+            // offers a decimal point and a minus on some OEM keyboards, and
+            // pasting is unrestricted on every one of them.
+            onChangeText={(t) => setCountText(t.replace(/[^0-9]/g, '').slice(0, 4))}
+            placeholder="Count the parcels and enter the total"
+            placeholderTextColor={color.faint}
+            keyboardType="number-pad"
+            inputMode="numeric"
+            maxLength={4}
+            style={[styles.input, mismatch ? styles.inputWarn : null]}
+            editable={!busy}
+          />
+          {mismatch ? (
+            <View style={styles.mismatch}>
+              <Icon name="alert-triangle" size={13} color={color.danger} />
+              {/*
+                Says that it is wrong, never what the right answer is — the whole
+                value of the field is that the driver counts rather than copies.
+              */}
+              <Tiny style={styles.mismatchText}>
+                Item count does not match this order. Count again.
+              </Tiny>
+            </View>
+          ) : (
+            <Tiny style={styles.help}>
+              {leg === 'PICKUP'
+                ? 'Count what you are actually taking, not what the order says.'
+                : 'Count what you are actually handing over, not what the order says.'}
+            </Tiny>
+          )}
         </View>
 
         <View style={styles.field}>
@@ -301,7 +439,7 @@ export default function CompleteTaskScreen() {
           icon="check"
           disabled={!ready}
           loading={busy}
-          onPress={() => void save()}
+          onPress={confirmAndSend}
         />
         {!ready ? (
           <Tiny style={styles.saveHint}>
@@ -309,11 +447,17 @@ export default function CompleteTaskScreen() {
               ? leg === 'PICKUP'
                 ? 'Enter who handed the parcel over.'
                 : 'Enter who received the parcel.'
-              : !signature && !photo
-                ? 'Capture a signature and a photo to finish this stop.'
-                : !signature
-                  ? 'A signature is still needed.'
-                  : 'A photo is still needed.'}
+              : counted === null
+                ? leg === 'PICKUP'
+                  ? 'Enter how many items you are picking up.'
+                  : 'Enter how many items you are delivering.'
+                : mismatch
+                  ? 'The item count does not match this order.'
+                : !signature && !photo
+                  ? 'Capture a signature and a photo to finish this stop.'
+                  : !signature
+                    ? 'A signature is still needed.'
+                    : 'A photo is still needed.'}
           </Tiny>
         ) : null}
       </View>
@@ -438,6 +582,23 @@ function CapturedProof({
             </Small>
           </View>
 
+          {proof.signedByName || proof.itemCount !== null ? (
+            <View style={styles.proofFacts}>
+              {proof.signedByName ? (
+                <Small style={styles.proofFact}>
+                  {leg === 'PICKUP' ? 'Handed over by' : 'Received by'}{' '}
+                  <Small style={styles.proofFactValue}>{proof.signedByName}</Small>
+                </Small>
+              ) : null}
+              {proof.itemCount !== null ? (
+                <Small style={styles.proofFact}>
+                  Items counted{' '}
+                  <Small style={styles.proofFactValue}>{proof.itemCount}</Small>
+                </Small>
+              ) : null}
+            </View>
+          ) : null}
+
           {proof.photo.url ? (
             <View style={styles.proofBlock}>
               <Tiny style={styles.label}>Photo</Tiny>
@@ -496,6 +657,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   label: { fontFamily: font.bold, fontSize: 11.5, color: color.primary },
+  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   input: {
     fontFamily: font.regular,
     fontSize: 15.5,
@@ -509,6 +671,12 @@ const styles = StyleSheet.create({
   },
   textarea: { minHeight: 76, textAlignVertical: 'top' },
   help: { fontSize: 11, color: color.muted },
+
+  // Danger, not warning: this one blocks the save rather than cautioning about it.
+  inputWarn: { borderColor: color.danger, backgroundColor: color.dangerSoft },
+  mismatch: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
+  mismatchText: { flex: 1, fontSize: 11, color: color.dangerText, lineHeight: 15 },
+
 
   captureRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingTop: 16 },
 
@@ -576,6 +744,10 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   saveHint: { textAlign: 'center', color: color.muted },
+
+  proofFacts: { paddingHorizontal: 18, paddingTop: 16, gap: 5 },
+  proofFact: { color: color.muted, fontSize: 13 },
+  proofFactValue: { color: color.ink, fontFamily: font.medium, fontSize: 13 },
 
   proofBlock: { paddingHorizontal: 18, paddingTop: 18, gap: 8 },
   proofImage: {

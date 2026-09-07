@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Alert, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 
 import { Card } from '@/components/Card';
 import { Chip } from '@/components/Chip';
 import { DetailRow } from '@/components/DetailRow';
+import { showDialog } from '@/components/Dialog';
 import { SecondaryButton } from '@/components/Button';
 import { ShiftStatus } from '@/components/ShiftStatus';
 import { Body, Display, Mono, SectionLabel, Small, Tiny } from '@/components/Text';
@@ -66,16 +67,18 @@ export default function MoreScreen() {
   }, [refreshQueue]);
 
   const confirmSignOut = useCallback(() => {
-    Alert.alert(
-      'Sign out?',
-      onShift
+    void showDialog({
+      title: 'Sign out?',
+      tone: 'warn',
+      icon: 'log-out',
+      message: onShift
         ? 'This ends your shift and stops sharing your position. You will need your email and password to get back in.'
         : 'You will need your email and password to get back in.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign out', style: 'destructive', onPress: () => void signOut() },
+      actions: [
+        { label: 'Sign out', style: 'danger', onPress: () => void signOut() },
+        { label: 'Cancel', style: 'cancel' },
       ],
-    );
+    });
   }, [onShift, signOut]);
 
   const driver = me?.driver;

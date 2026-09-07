@@ -3,9 +3,12 @@ import { type StyleProp, type ViewStyle } from 'react-native';
 import { MapPlaceholder } from './MapPlaceholder';
 
 /**
- * Web stand-in for `react-native-maps`, which ships no web implementation — its
- * entry calls `codegenNativeComponent`, which `react-native-web` does not
- * export, so merely importing it throws.
+ * Web stand-in for the native map.
+ *
+ * `maps.tsx` runs Leaflet inside a `react-native-webview`. In a browser that is
+ * a WebView wrapping a WebView — the sensible web answer is Leaflet mounted
+ * directly on the DOM, which is what the dispatcher console already does. Until
+ * something on web actually needs a map, a placeholder is the honest stand-in.
  *
  * Metro is pointed here by `metro.config.js`. It would normally pick a `.web`
  * file automatically, but both screens import through the `@/` tsconfig alias
@@ -31,7 +34,7 @@ export interface Region {
  * The screens pass a dozen more (`initialRegion`, `showsUserLocation`, …) and
  * ignoring them is correct here. They still typecheck, because `tsc` does not
  * apply Metro's platform extensions — it resolves `@/components/maps` to
- * `maps.ts` and therefore to the real `react-native-maps` types.
+ * `maps.tsx` and typechecks against the native component's props.
  */
 interface MapViewProps {
   style?: StyleProp<ViewStyle>;

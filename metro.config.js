@@ -7,18 +7,16 @@ const config = getDefaultConfig(__dirname);
 /**
  * Make the `@/components/maps` alias honour platform extensions.
  *
- * `src/components/maps.web.tsx` exists precisely so the browser bundle gets a
- * placeholder instead of `react-native-maps`, which ships no web build — its
- * entry calls `codegenNativeComponent`, which `react-native-web` does not
- * export, so merely importing it throws:
- *
- *   TypeError: (0, _reactNativeWebDistIndex.codegenNativeComponent) is not a function
+ * `src/components/maps.tsx` draws its map with Leaflet inside a
+ * `react-native-webview`, which is a native component the browser has no use
+ * for — on web the right answer is a real DOM map or nothing, not a WebView
+ * wrapping a WebView. `maps.web.tsx` stands in with a placeholder.
  *
  * Metro normally picks `.web.tsx` automatically. It does NOT when the import
  * goes through a tsconfig `paths` alias: `@/components/maps` is mapped straight
  * to a concrete file, and the platform-extension pass never runs. Both screens
- * import via `@/`, so on web they got `maps.ts` — and with it the real
- * `react-native-maps`.
+ * import via `@/`, so without this the browser bundle would get the native
+ * implementation.
  *
  * Redirecting the specifier itself is the narrowest fix: native resolution is
  * untouched, and any future importer of the alias is covered too.

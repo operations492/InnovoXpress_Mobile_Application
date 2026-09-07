@@ -1,8 +1,9 @@
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import { demoApi } from '@/features/demo/demoApi';
 import { env } from '@/lib/env';
 import { color, font } from '@/theme/tokens';
+import { showDialog } from './Dialog';
 import { Icon } from './Icon';
 import { Tiny } from './Text';
 
@@ -21,16 +22,23 @@ export function DemoBanner() {
   if (!env.demo) return null;
 
   const reset = () => {
-    Alert.alert('Reset demo data?', 'Puts the three sample jobs back to their starting state.', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset',
-        onPress: () => {
-          demoApi.reset();
-          void qc.invalidateQueries();
+    void showDialog({
+      title: 'Reset demo data?',
+      tone: 'warn',
+      icon: 'refresh-cw',
+      message: 'Puts the three sample jobs back to their starting state.',
+      actions: [
+        {
+          label: 'Reset',
+          style: 'danger',
+          onPress: () => {
+            demoApi.reset();
+            void qc.invalidateQueries();
+          },
         },
-      },
-    ]);
+        { label: 'Cancel', style: 'cancel' },
+      ],
+    });
   };
 
   return (

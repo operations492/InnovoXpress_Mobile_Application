@@ -27,6 +27,7 @@ import {
 
 import { ApiError, SessionExpiredError } from '@/api/client';
 import { DemoBanner } from '@/components/DemoBanner';
+import { DialogHost } from '@/components/Dialog';
 import { LocationGate } from '@/components/LocationGate';
 import { env } from '@/lib/env';
 import { startQueryFocusTracking } from '@/lib/queryFocus';
@@ -128,6 +129,16 @@ export default function RootLayout() {
             </LocationGuard>
           </AuthProvider>
         </QueryClientProvider>
+
+        {/*
+          Outside QueryClientProvider and outside the location gate on purpose.
+          The host needs neither, and both of those can render *instead of* their
+          children — a dialog raised while the gate is up (or before a session
+          exists) would otherwise have nowhere to appear. Inside SafeAreaProvider
+          because it reads the real insets, not the zeroed ones the demo banner
+          hands down.
+        */}
+        <DialogHost />
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
