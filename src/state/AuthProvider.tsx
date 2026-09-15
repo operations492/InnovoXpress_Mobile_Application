@@ -6,6 +6,7 @@ import { supabase, startSessionAutoRefresh } from '@/lib/supabase';
 import { setShift } from '@/api/endpoints';
 import * as buffer from '@/features/location/buffer';
 import * as tracking from '@/features/location/tracking';
+import { unregister as unregisterPush } from '@/features/notifications/push';
 
 /**
  * Sign-in lives entirely in Supabase — the API has no login endpoint by design.
@@ -97,6 +98,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      * trapped in the app, and the 04:00 job closes an abandoned shift anyway.
      */
     await setShift(false).catch(() => undefined);
+
+    /*
+     * And stop the buzzing, also while the token still works.
+     *
+     * This is the one that matters on a handset passed between drivers: without
+     * it the server keeps pushing this phone for the previous driver's jobs, on
+     * a device where the new holder cannot even open the record.
+     */
+    await unregisterPush().catch(() => undefined);
 
     await buffer.clear().catch(() => undefined);
     await buffer.setActiveConsignment(null).catch(() => undefined);

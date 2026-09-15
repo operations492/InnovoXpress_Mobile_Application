@@ -69,6 +69,13 @@ export interface MarkerProps {
   description?: string;
   /** Any colour string; it is handed to CSS, not to a native pin palette. */
   pinColor?: string;
+  /**
+   * One or two characters drawn inside the pin.
+   *
+   * Colour alone cannot say what a stop IS — it has to be learned from a legend
+   * and is invisible to a colour-blind driver. A letter is read directly.
+   */
+  label?: string;
   onCalloutPress?: () => void;
 }
 
@@ -97,6 +104,7 @@ interface MarkerSpec {
   title: string | null;
   description: string | null;
   color: string;
+  label: string | null;
   tappable: boolean;
 }
 
@@ -133,6 +141,7 @@ function readChildren(children: ReactNode): {
         title: p.title ?? null,
         description: p.description ?? null,
         color: p.pinColor ?? color.primary,
+        label: p.label ?? null,
         tappable: Boolean(p.onCalloutPress),
       });
       return;
@@ -194,6 +203,17 @@ const HTML = `<!DOCTYPE html>
     border: 3px solid #fff; box-sizing: border-box;
     box-shadow: 0 1px 4px rgba(26,26,46,.45);
   }
+  /*
+    The labelled variant is bigger, because it has to hold a readable glyph at
+    arm's length in daylight. Same ring and shadow so the two read as one family.
+  */
+  .ix-pin.ix-lab {
+    width: 28px; height: 28px;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 800; font-size: 13px; line-height: 1;
+    /* A dark tile under a white glyph is the one case the ring cannot save. */
+    text-shadow: 0 1px 1px rgba(0,0,0,.25);
+  }
   .ix-me {
     width: 14px; height: 14px; border-radius: 50%;
     background: ${color.primary}; border: 3px solid #fff; box-sizing: border-box;
@@ -254,11 +274,15 @@ const HTML = `<!DOCTYPE html>
     lineLayer.clearLayers();
 
     markers.forEach(function (m) {
+      var size = m.label ? 28 : 16;
+      var cls = m.label ? 'ix-pin ix-lab' : 'ix-pin';
+      var text = m.label ? String(m.label) : '';
+
       var icon = L.divIcon({
         className: '',
-        html: '<div class="ix-pin" style="background:' + m.color + '"></div>',
-        iconSize: [16, 16],
-        iconAnchor: [8, 8],
+        html: '<div class="' + cls + '" style="background:' + m.color + '">' + text + '</div>',
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
       });
       var marker = L.marker([m.lat, m.lng], { icon: icon }).addTo(markerLayer);
 

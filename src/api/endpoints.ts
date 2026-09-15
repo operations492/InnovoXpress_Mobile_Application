@@ -272,3 +272,15 @@ export const markRead = (
   api.post<{ lastReadAt: string }>(`/api/chat/conversations/${conversationId}/read`, {
     lastMessageId,
   });
+
+/**
+ * Register (or clear) where to push notifications for this session.
+ *
+ * Keyed off the bearer token on the server, never a user id in the body — a
+ * caller must not be able to redirect somebody else's notifications to their own
+ * phone. `null` clears, which is what sign-out sends.
+ */
+export const setPushToken = (pushToken: string | null): Promise<void> =>
+  env.demo
+    ? Promise.resolve()
+    : api.post<void>('/api/auth/push-token', { pushToken });

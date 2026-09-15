@@ -29,6 +29,7 @@ import { ApiError, SessionExpiredError } from '@/api/client';
 import { DemoBanner } from '@/components/DemoBanner';
 import { DialogHost } from '@/components/Dialog';
 import { LocationGate } from '@/components/LocationGate';
+import { PushNotifications } from '@/features/notifications/PushNotifications';
 import { env } from '@/lib/env';
 import { startQueryFocusTracking } from '@/lib/queryFocus';
 import { AuthProvider, useAuth } from '@/state/AuthProvider';
@@ -124,6 +125,7 @@ export default function RootLayout() {
             <LocationGuard>
               <ShiftProvider>
                 <StatusBar style="dark" />
+                <PushNotifications />
                 <AuthGate />
               </ShiftProvider>
             </LocationGuard>

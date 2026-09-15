@@ -72,6 +72,22 @@ const supabaseUrl = clean(process.env.EXPO_PUBLIC_SUPABASE_URL);
 const supabaseAnonKey = clean(process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
 
 /**
+ * The number a driver rings when a job stops going to plan.
+ *
+ * Configuration rather than a constant: it is the operations desk's own line and
+ * it differs per deployment. It is NOT a secret — every driver is meant to have
+ * it, and it ends up on a lock screen the first time anyone dials it.
+ *
+ * It comes from here rather than from the API because there is no endpoint that
+ * owns it: the backend models clients, drivers and orders, and has no concept of
+ * "the dispatch desk". Inventing a table for one phone number would be a schema
+ * change to hold a string that changes about once a year.
+ *
+ * Left unset, the app says so rather than offering a button that dials nothing.
+ */
+const dispatchPhone = clean(process.env.EXPO_PUBLIC_DISPATCH_PHONE);
+
+/**
  * Demo mode — the app runs entirely on fixtures, with no API and no Supabase.
  *
  * It turns itself on when the credentials are absent rather than throwing,
@@ -94,6 +110,8 @@ export const env = {
   apiUrl: apiUrl ?? 'demo — no server',
   supabaseUrl: supabaseUrl ?? '',
   supabaseAnonKey: supabaseAnonKey ?? '',
+  /** Null when unconfigured — the UI hides the call rather than dialling nothing. */
+  dispatchPhone,
   /** See the constants above — fixed by the backend contract, not configurable. */
   locationIntervalMs: LOCATION_INTERVAL_MS,
   locationDistanceM: LOCATION_DISTANCE_M,

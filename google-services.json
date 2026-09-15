@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1014568906623",
+    "project_id": "innovoxpress-56078",
+    "storage_bucket": "innovoxpress-56078.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1014568906623:android:829ff8a0e6ddd91608744a",
+        "android_client_info": {
+          "package_name": "com.innovoxpress.driver"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBqF3u68IedFB85QqFcaPqzso9o7ZP1_88"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

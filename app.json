@@ -4,8 +4,9 @@
     "slug": "innovo-driver-app",
     "extra": {
       "eas": {
-        "projectId": ""
-      }
+        "projectId": "2fdd3219-bb47-46b6-ad7a-90064f1ffd69"
+      },
+      "router": {}
     }
   }
 }

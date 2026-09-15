@@ -16,6 +16,7 @@ import { ApiError } from '@/api/client';
 import type { PodLeg } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
 import { showDialog } from '@/components/Dialog';
+import { DispatchContact } from '@/components/DispatchContact';
 import { Icon } from '@/components/Icon';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SignaturePad } from '@/components/SignaturePad';
@@ -108,37 +109,34 @@ export default function CompleteTaskScreen() {
   const signedByName = receivedBy.trim();
 
   /*
+   * The expected total IS shown, because the count must match to proceed.
+   *
+   * Those two decisions belong together. Hiding the number makes the count a
+   * genuine count; hiding it while also refusing any other number makes the
+   * screen a locked door with the key withheld — a driver who counts 2 of 3 can
+   * neither pass nor find out what would let them. Showing it costs the blind
+   * count and buys a driver who is never stuck.
+   *
    * `totalQty` — the sum of every line's quantity — not `itemCount`, which
    * counts lines. A driver counts parcels on a trolley, so three boxes of the
    * same SKU is three, not one. Zero means the order lists no items at all,
    * which leaves nothing to compare against.
    */
-  /*
-   * The expected total is NEVER shown on this screen, and that is the point.
-   *
-   * A driver who can see "the order lists 3" before typing has been handed the
-   * answer, and the field stops being a count and becomes a confirmation — which
-   * is exactly the failure it exists to catch. The number is held here only to
-   * decide whether the save is allowed; the UI says "does not match" and nothing
-   * more.
-   */
   const expected = task?.totals.totalQty ?? 0;
   const counted = /^\d+$/.test(countText) ? Number(countText) : null;
   const mismatch = expected > 0 && counted !== null && counted !== expected;
 
-  /*
-   * The count has to match before the stop can be closed.
+  /**
+   * The count must agree with the order before the stop can close.
    *
-   * Combined with not showing the expected total, that makes this a real count:
-   * the driver cannot copy a number off the screen, and cannot proceed on a
-   * number that disagrees with the order. The screen says only that it does not
-   * match, never what it should be.
-   *
-   * `expected > 0` guards the case of an order with no items, where there is
-   * nothing to match against and any positive count is accepted.
+   * `expected > 0` guards an order with no items, where there is nothing to
+   * match against and any positive count is accepted.
    */
-  const countOk = counted !== null && counted > 0 && (expected === 0 || counted === expected);
-  const ready = Boolean(photo && signature && signedByName) && countOk;
+  const ready =
+    Boolean(photo && signature && signedByName) &&
+    counted !== null &&
+    counted > 0 &&
+    !mismatch;
 
   const onSignature = useCallback(
     (dataUrl: string) => {
@@ -160,59 +158,62 @@ export default function CompleteTaskScreen() {
     [],
   );
 
-  const send = useCallback(async () => {
-    if (!ready || !task || !photo || !signature || counted === null || busy) return;
+  const send = useCallback(
+    async () => {
+      if (!ready || !task || !photo || !signature || counted === null || busy) return;
 
-    setBusy(true);
-    try {
-      await capture.mutateAsync({
-        leg,
-        photo,
-        signature,
-        signedByName,
-        itemCount: counted,
-        note: note.trim() || undefined,
-        idempotencyKey,
-      });
+      setBusy(true);
+      try {
+        await capture.mutateAsync({
+          leg,
+          photo,
+          signature,
+          signedByName,
+          itemCount: counted,
+          note: note.trim() || undefined,
+          idempotencyKey,
+        });
 
-      // The signature file has served its purpose the moment the server has it.
-      discardFile(signature.uri);
-      setSignature(null);
+        // The signature file has served its purpose the moment the server has it.
+        discardFile(signature.uri);
+        setSignature(null);
 
-      router.replace(`/task/${task.id}`);
-    } catch (e) {
-      const conflict = e instanceof ApiError && e.isConflict;
-      void showDialog({
-        title: conflict ? 'This stop is already closed' : 'Could not save the proof',
-        tone: conflict ? 'warn' : 'danger',
-        message: messageFor(e),
-        actions: conflict
-          ? [
-              {
-                label: 'Back to job',
-                style: 'primary',
-                onPress: () => router.replace(`/task/${task.id}`),
-              },
-            ]
-          : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  }, [
-    ready,
-    task,
-    photo,
-    signature,
-    busy,
-    capture,
-    leg,
-    signedByName,
-    counted,
-    note,
-    idempotencyKey,
-    router,
-  ]);
+        router.replace(`/task/${task.id}`);
+      } catch (e) {
+        const conflict = e instanceof ApiError && e.isConflict;
+        void showDialog({
+          title: conflict ? 'This stop is already closed' : 'Could not save the proof',
+          tone: conflict ? 'warn' : 'danger',
+          message: messageFor(e),
+          actions: conflict
+            ? [
+                {
+                  label: 'Back to job',
+                  style: 'primary',
+                  onPress: () => router.replace(`/task/${task.id}`),
+                },
+              ]
+            : undefined,
+        });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [
+      ready,
+      task,
+      photo,
+      signature,
+      busy,
+      capture,
+      leg,
+      signedByName,
+      counted,
+      note,
+      idempotencyKey,
+      router,
+    ],
+  );
 
   /**
    * The count is confirmed out loud even though it already matches.
@@ -306,6 +307,16 @@ export default function CompleteTaskScreen() {
             <Tiny style={styles.label}>
               {leg === 'PICKUP' ? 'Number of items picked up' : 'Number of items delivered'}
             </Tiny>
+            {/*
+              The figure the count has to reach, stated up front. The save is
+              blocked until they agree, so withholding it would leave a driver
+              guessing at the one number that unlocks the screen.
+            */}
+            {expected > 0 ? (
+              <Tiny style={styles.expected}>
+                Order lists {expected} item{expected === 1 ? '' : 's'}
+              </Tiny>
+            ) : null}
           </View>
           <TextInput
             value={countText}
@@ -425,6 +436,23 @@ export default function CompleteTaskScreen() {
           file contents rather than trusting the file name. Saving moves this job to{' '}
           {leg === 'PICKUP' ? 'Picked Up' : 'Delivered'}, and that cannot be undone from the app.
         </Tiny>
+
+        {/*
+          Always present, on both legs — not conditional on anything going wrong.
+
+          A stop stalls in more ways than a bad count: goods refused, nobody
+          willing to sign, an address that does not exist. Showing this only on a
+          mismatch would answer one of those and leave the driver hunting for a
+          number for the rest, and a help affordance that appears and disappears
+          is one nobody learns to look for.
+        */}
+        <DispatchContact
+          reason={
+            leg === 'PICKUP'
+              ? 'Something not right at this pickup? Dispatch can amend the order or tell you to move on.'
+              : 'Something not right at this delivery? Dispatch can amend the order or tell you to move on.'
+          }
+        />
       </ScrollView>
 
       <View style={[styles.saveBar, { paddingBottom: insets.bottom + 12 }]}>
@@ -451,13 +479,13 @@ export default function CompleteTaskScreen() {
                 ? leg === 'PICKUP'
                   ? 'Enter how many items you are picking up.'
                   : 'Enter how many items you are delivering.'
-                : mismatch
-                  ? 'The item count does not match this order.'
                 : !signature && !photo
                   ? 'Capture a signature and a photo to finish this stop.'
                   : !signature
                     ? 'A signature is still needed.'
-                    : 'A photo is still needed.'}
+                    : !photo
+                      ? 'A photo is still needed.'
+                      : 'The item count does not match this order.'}
           </Tiny>
         ) : null}
       </View>
@@ -657,6 +685,7 @@ const styles = StyleSheet.create({
     gap: 7,
   },
   label: { fontFamily: font.bold, fontSize: 11.5, color: color.primary },
+  expected: { fontFamily: font.medium, fontSize: 11.5, color: color.muted },
   labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   input: {
     fontFamily: font.regular,

@@ -1,4 +1,24 @@
+import { existsSync } from 'fs';
 import type { ConfigContext, ExpoConfig } from 'expo/config';
+
+/**
+ * Android push needs Firebase, even though nothing else here does.
+ *
+ * Expo's push service is a front door to FCM, not a replacement for it, so an
+ * Android build has to carry the project's `google-services.json` or
+ * `getExpoPushTokenAsync` fails on the device with "Default FirebaseApp is not
+ * initialized". EAS Build injects it from the credentials `eas credentials`
+ * uploaded; a LOCAL `npx expo run:android` has no such step, which is why the
+ * file is picked up from the project root here.
+ *
+ * Conditional because it must not become a build-breaking dependency: prebuild
+ * throws outright on a `googleServicesFile` that points at nothing, and a
+ * teammate cloning this repo has no reason to be blocked from building a debug
+ * APK just because push is not set up on their machine. Notifications simply do
+ * not arrive until the file is present, which is the honest degradation.
+ */
+const googleServices = './google-services.json';
+const hasGoogleServices = existsSync(googleServices);
 
 /**
  * Expo config as code, not JSON, so the permission strings sit beside the
@@ -17,6 +37,19 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
   name: 'Innovo Xpress Driver',
   slug: 'innovo-driver-app',
+  /**
+   * The Expo account that owns this project, and therefore the FCM and APNs
+   * credentials EAS holds for it.
+   *
+   * Named explicitly rather than left to default, because the default is
+   * whichever account happens to be logged in — which on a machine with access
+   * to two accounts silently creates a SECOND project, with its own push
+   * credentials, minting tokens the other project cannot send to.
+   *
+   * The team rather than a person: push credentials outliving one employee's
+   * account is the whole point of an organisation.
+   */
+  owner: 'mabdullahkhan47s-team',
   scheme: 'innovodriver',
   version: '1.0.0',
   orientation: 'portrait',
@@ -46,6 +79,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
 
   android: {
     package: 'com.innovoxpress.driver',
+    ...(hasGoogleServices ? { googleServicesFile: googleServices } : {}),
     adaptiveIcon: {
       backgroundColor: '#4B3FCF',
       foregroundImage: './assets/android-icon-foreground.png',
@@ -89,6 +123,15 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       'INTERNET',
       'ACCESS_NETWORK_STATE',
       'VIBRATE',
+      /*
+       * Android 13+. Without it the OS drops every notification silently — no
+       * error, no banner, and `getPermissionsAsync` reports denied with
+       * `canAskAgain: false`, so the app cannot even prompt its way out.
+       *
+       * It is not implied by the plugin: the explicit list above REPLACES Expo's
+       * defaults, which is the same trap that cost us RECEIVE_BOOT_COMPLETED.
+       */
+      'POST_NOTIFICATIONS',
     ],
     /**
      * `expo-image-picker`'s plugin adds RECORD_AUDIO so that video capture works.
@@ -125,6 +168,29 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
           'Innovo Xpress shows dispatch where you are while you are on shift.',
         isAndroidBackgroundLocationEnabled: true,
         isAndroidForegroundServiceEnabled: true,
+      },
+    ],
+    [
+      'expo-notifications',
+      {
+        /*
+         * Android draws the small icon as a SILHOUETTE — every non-transparent
+         * pixel becomes white, whatever colour it was. Hand it the full-colour
+         * launcher icon and it arrives as a white blob. The monochrome adaptive
+         * asset is already a single shape on transparency, which is the same
+         * thing this needs.
+         */
+        icon: './assets/android-icon-monochrome.png',
+        // Tints the silhouette and the app name in the notification shade.
+        color: '#4B3FCF',
+        /*
+         * Where a notification lands if the sender names no channel. It is
+         * belt-and-braces — the backend always sets `channelId: 'jobs'` — but a
+         * notification that misses its channel falls back to DEFAULT importance
+         * and shows no heads-up banner, which for a new job is the same as not
+         * arriving.
+         */
+        defaultChannel: 'jobs',
       },
     ],
     [

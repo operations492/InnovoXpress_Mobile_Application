@@ -2,6 +2,11 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    // For app.config.ts alone, which reads the filesystem to decide whether the
+    // Firebase config for Android push is present. Expo resolves modules with
+    // the `react-native` condition, under which `fs` does not resolve at all;
+    // naming node here loads its types the other way, through typeRoots.
+    "types": ["node"],
     "noUncheckedIndexedAccess": true,
     "paths": {
       "@/*": ["./src/*"]

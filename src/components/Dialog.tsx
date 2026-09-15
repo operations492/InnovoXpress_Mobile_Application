@@ -185,7 +185,18 @@ export function DialogHost() {
       onRequestClose={dismiss}
     >
       <Pressable
-        style={styles.scrim}
+        /*
+         * The safe-area padding belongs HERE, not on the wrapper below.
+         *
+         * This is the only element in the tree with a definite height — `flex: 1`
+         * against the Modal's full-screen root. Padding it is what makes the
+         * space the card may occupy genuinely bounded, which is the precondition
+         * for the percentage cap on the wrapper resolving to anything at all.
+         */
+        style={[
+          styles.scrim,
+          { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
+        ]}
         // The scrim is a tap target only when it does something. Marked as such
         // for screen readers rather than announcing an unlabelled button.
         accessibilityRole={dismissible ? 'button' : undefined}
@@ -197,13 +208,7 @@ export function DialogHost() {
           with no handler is deliberate — RN has no stopPropagation, and an
           empty responder is how a child opts out of its parent's press.
         */}
-        <Pressable
-          onPress={() => undefined}
-          style={[
-            styles.cardWrap,
-            { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
-          ]}
-        >
+        <Pressable onPress={() => undefined} style={styles.cardWrap}>
           <Animated.View
             style={[
               styles.card,
@@ -267,8 +272,26 @@ const styles = StyleSheet.create({
     // The ink token at 45% — the mockups' own overlay, not a generic black.
     backgroundColor: 'rgba(26, 26, 46, 0.45)',
     justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 22,
   },
-  cardWrap: { paddingHorizontal: 22 },
+  /*
+   * `maxHeight: '100%'` works here and did NOT work on the card before.
+   *
+   * A percentage resolves against the parent's height, and this wrapper's parent
+   * — the scrim — is `flex: 1`, so its height is definite. The card's old
+   * `maxHeight: '82%'` was measured against THIS wrapper, which had no height of
+   * its own and simply grew to fit its content: a percentage of "as tall as you
+   * like" is not a limit, so the cap never applied and a tall dialog ran off the
+   * bottom of the screen.
+   */
+  cardWrap: {
+    width: '100%',
+    // Keeps the dialog a dialog on a tablet or a landscape phone, where a
+    // full-width card would stretch the message to an unreadable line length.
+    maxWidth: 420,
+    maxHeight: '100%',
+  },
   card: {
     backgroundColor: color.surface,
     borderRadius: radius.card,
@@ -277,28 +300,37 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     alignItems: 'center',
     gap: 10,
-    // Bounded so a long message scrolls inside the card instead of growing it
-    // past the top of a small screen.
-    maxHeight: '82%',
-    // Keeps the dialog a dialog on a tablet or a landscape phone, where a
-    // full-width card would stretch the message to an unreadable line length.
-    maxWidth: 420,
-    alignSelf: 'center',
-    width: '100%',
+    /*
+     * Flex children default to `flexShrink: 0`, so without this the card keeps
+     * its full content height even once the wrapper is capped — and overflows
+     * it, clipping the buttons at the bottom. This is the half of the fix that
+     * actually stops the cut.
+     */
+    flexShrink: 1,
   },
   badge: {
     width: 54,
     height: 54,
+    flexShrink: 0,
     borderRadius: radius.card,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 2,
   },
-  title: { textAlign: 'center', fontSize: 17 },
-  messageScroll: { alignSelf: 'stretch' },
+  title: { textAlign: 'center', fontSize: 17, flexShrink: 0 },
+  /*
+   * The message is the ONLY thing allowed to give up space, and the buttons are
+   * explicitly protected from it.
+   *
+   * When the card hits its cap something has to yield, and the answer must never
+   * be the actions: a dialog whose buttons are off-screen cannot be answered or
+   * dismissed, which on a blocking confirmation traps the driver mid-delivery.
+   * So the text scrolls and everything else holds its size.
+   */
+  messageScroll: { alignSelf: 'stretch', flexShrink: 1 },
   messageContent: { paddingVertical: 2 },
   message: { textAlign: 'center', color: color.body, lineHeight: 20, fontFamily: font.regular },
-  actions: { alignSelf: 'stretch', gap: 8, marginTop: 12 },
+  actions: { alignSelf: 'stretch', gap: 8, marginTop: 12, flexShrink: 0 },
   // Matches PrimaryButton's height so a stack of mixed buttons reads as a set.
   secondary: { justifyContent: 'center', minHeight: 48 },
 });
