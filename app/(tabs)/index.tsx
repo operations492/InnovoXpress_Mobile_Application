@@ -15,7 +15,7 @@ import { ShiftStatus } from '@/components/ShiftStatus';
 import { EmptyState, ErrorState, LoadingState } from '@/components/States';
 import { TaskCard } from '@/components/TaskCard';
 import { Tiny } from '@/components/Text';
-import { useMyTasks } from '@/features/tasks/queries';
+import { useMyHistory, useMyTasks } from '@/features/tasks/queries';
 import { isPickupDone } from '@/features/tasks/statusFlow';
 import { useShift } from '@/state/ShiftProvider';
 import { color, font, radius } from '@/theme/tokens';
@@ -54,15 +54,30 @@ export default function TasksScreen() {
   const [visible, setVisible] = useState(PAGE);
 
   /*
-   * One request feeds all three lanes.
+   * Two requests, split along the line that matters: whether a slice is bounded.
    *
-   * `includeDelivered` is the only filter this endpoint takes — there is no
-   * status parameter and no page parameter — so asking for everything once and
-   * splitting it here costs one round trip instead of two, makes switching lanes
-   * instant, and shares its cache with the History tab, which was already
-   * fetching exactly this.
+   * The run is a handful of jobs and changes constantly, so it is fetched whole
+   * and polled. History only grows and never changes once written, so it is
+   * paged, fetched on demand, and never polled — the Completed query does not
+   * fire at all until the driver opens that tab.
+   *
+   * The alternative, one request for everything, is what this replaced. It meant
+   * first launch downloaded every job the driver had ever delivered, and then did
+   * it again every 45 seconds, to render eight rows.
    */
-  const { data, isLoading, isError, error, refetch, isRefetching } = useMyTasks(true);
+  const { data, isLoading, isError, error, refetch, isRefetching } = useMyTasks(false);
+
+  /*
+   * Always on, not gated on the Completed tab being open.
+   *
+   * Gating it would leave the Completed chip with no count until tapped, which
+   * is worse than the thing it saves: one page is twenty rows, bounded and never
+   * polled, where the old behaviour was every delivered job the driver had ever
+   * had, re-fetched every 45 seconds. Fetching page one up front buys a correct
+   * count and an instant tab, and costs a fixed amount no matter how long the
+   * driver has worked here.
+   */
+  const history = useMyHistory();
 
   const lanes = useMemo(() => {
     /*
@@ -81,8 +96,12 @@ export default function TasksScreen() {
      * Sorted on a copy — `data` belongs to the query cache, and sorting it in
      * place would mutate what every other subscriber is reading.
      */
-    const all = [...(data ?? [])].sort((a, b) => at(b.updatedAt) - at(a.updatedAt));
-    const active = all.filter((t) => t.status !== 'DELIVERED');
+    // Live work only now — the server no longer sends delivered jobs on this
+    // request, so there is nothing to filter out. The guard stays as a cheap
+    // assertion of that contract rather than as working logic.
+    const active = [...(data ?? [])]
+      .sort((a, b) => at(b.updatedAt) - at(a.updatedAt))
+      .filter((t) => t.status !== 'DELIVERED');
 
     return {
       active,
@@ -97,13 +116,53 @@ export default function TasksScreen() {
        * stage one at a time.
        */
       carrying: active.filter((t) => isPickupDone(t.status)),
-      completed: all.filter((t) => t.status === 'DELIVERED'),
+      /*
+       * Flattened from however many pages have been pulled in, already in server
+       * order (newest completed first) — so no sort here. Re-sorting would be
+       * actively wrong once more than one page is loaded: it can only order the
+       * rows in hand, which is a different thing from ordering the archive.
+       */
+      completed: history.data?.pages.flatMap((p) => p.data) ?? [],
     };
-  }, [data]);
+  }, [data, history.data]);
 
   const list = lanes[lane];
-  const shown = useMemo(() => list.slice(0, visible), [list, visible]);
-  const hasMore = visible < list.length;
+  const onHistory = lane === 'completed';
+
+  /*
+   * Two kinds of "more", one gesture.
+   *
+   * The live lanes hold every row already, so growing the window is pure
+   * rendering and instant. Completed holds only the pages fetched so far, so the
+   * same scroll has to go and get the next one. The list below does not care
+   * which — it calls `loadMore` and shows `hasMore`.
+   */
+  const shown = useMemo(
+    () => (onHistory ? list : list.slice(0, visible)),
+    [onHistory, list, visible],
+  );
+  const hasMore = onHistory ? history.hasNextPage : visible < list.length;
+  const loadingMore = onHistory && history.isFetchingNextPage;
+
+  const loadMore = useCallback(() => {
+    if (!hasMore) return;
+    if (onHistory) {
+      // Guarded: FlatList fires onEndReached more than once per overscroll, and
+      // an unguarded call would request the same page several times over.
+      if (!history.isFetchingNextPage) void history.fetchNextPage();
+      return;
+    }
+    setVisible((v) => v + PAGE);
+  }, [hasMore, onHistory, history]);
+
+  /**
+   * The archive's true size, which is not the number of rows on screen.
+   *
+   * It rides along on every page as `meta.total`, so the chip can say
+   * "Completed 437" while holding twenty. Falling back to the loaded count keeps
+   * it honest before the first page arrives rather than flashing a zero.
+   */
+  const completedTotal = history.data?.pages[0]?.meta.total ?? lanes.completed.length;
 
   /*
    * Resetting the window here rather than in an effect keyed on `lane`. An
@@ -143,7 +202,9 @@ export default function TasksScreen() {
     <View style={styles.tabs}>
       {LANES.map((item) => {
         const selected = item.id === lane;
-        const count = lanes[item.id].length;
+        // Completed reports what the server says exists, not what has been
+        // downloaded — the two differ by every page not yet fetched.
+        const count = item.id === 'completed' ? completedTotal : lanes[item.id].length;
 
         return (
           <Pressable
@@ -216,27 +277,30 @@ export default function TasksScreen() {
         ]}
         ItemSeparatorComponent={() => <View style={styles.gap} />}
         /*
-         * The endpoint returns the whole list in one response — it takes no
-         * offset or limit — so this windows what is already in hand rather than
-         * fetching a page. That is still the part worth doing on a phone: it is
-         * the mounted cards, not the JSON, that make a long list scroll badly.
+         * On the live lanes this widens the window over rows already held; on
+         * Completed it fetches the next page from the server. Both are worth
+         * doing — it is the mounted cards, not the JSON, that make a long list
+         * scroll badly, and it is the JSON, not the cards, that makes a long
+         * archive expensive to open.
          *
          * Fires slightly before the end so the next batch is in place by the
          * time the driver's thumb gets there.
          */
-        onEndReached={() => hasMore && setVisible((v) => v + PAGE)}
+        onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={
-          hasMore ? (
+          hasMore || loadingMore ? (
             <View style={styles.footer}>
               <ActivityIndicator size="small" color={color.primary} />
               <Tiny style={styles.footerText}>
-                Showing {shown.length} of {list.length}
+                Showing {shown.length} of {onHistory ? completedTotal : list.length}
               </Tiny>
             </View>
-          ) : list.length > PAGE ? (
+          ) : (onHistory ? completedTotal : list.length) > PAGE ? (
             <View style={styles.footer}>
-              <Tiny style={styles.footerText}>All {list.length} shown</Tiny>
+              <Tiny style={styles.footerText}>
+                All {onHistory ? completedTotal : list.length} shown
+              </Tiny>
             </View>
           ) : null
         }

@@ -16,7 +16,7 @@ import { ApiError } from '@/api/client';
 import type { PodLeg } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
 import { showDialog } from '@/components/Dialog';
-import { DispatchContact } from '@/components/DispatchContact';
+import { CallDispatchButton, DispatchContact } from '@/components/DispatchContact';
 import { Icon } from '@/components/Icon';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SignaturePad } from '@/components/SignaturePad';
@@ -333,15 +333,34 @@ export default function CompleteTaskScreen() {
             editable={!busy}
           />
           {mismatch ? (
-            <View style={styles.mismatch}>
-              <Icon name="alert-triangle" size={13} color={color.danger} />
+            <View style={styles.mismatchBlock}>
+              <View style={styles.mismatch}>
+                <Icon name="alert-triangle" size={13} color={color.danger} />
+                {/*
+                  Says that it is wrong, never what the right answer is — the whole
+                  value of the field is that the driver counts rather than copies.
+                */}
+                <Tiny style={styles.mismatchText}>
+                  Item count does not match this order. Count again.
+                </Tiny>
+              </View>
+
               {/*
-                Says that it is wrong, never what the right answer is — the whole
-                value of the field is that the driver counts rather than copies.
+                The way out, offered at the moment the screen becomes a dead end.
+
+                A mismatch is the one state here that a driver cannot resolve
+                alone: the save is disabled, and if the count is genuinely right —
+                the sender is short, or handed over extra — recounting will never
+                clear it. Dispatch amending the order is the only exit, so the
+                number belongs beside the thing that is blocking rather than at
+                the foot of a screen they would have to scroll to find.
+
+                This duplicates the card at the bottom, and that is the intent.
+                The card stays for everything else that stalls a stop; this one
+                exists because *this* failure has a known remedy and the driver is
+                stuck in front of it right now.
               */}
-              <Tiny style={styles.mismatchText}>
-                Item count does not match this order. Count again.
-              </Tiny>
+              <CallDispatchButton compact />
             </View>
           ) : (
             <Tiny style={styles.help}>
@@ -703,6 +722,9 @@ const styles = StyleSheet.create({
 
   // Danger, not warning: this one blocks the save rather than cautioning about it.
   inputWarn: { borderColor: color.danger, backgroundColor: color.dangerSoft },
+  // Column, so the call button sits under the warning rather than beside it —
+  // the text wraps to two lines on a narrow phone and would squeeze it out.
+  mismatchBlock: { gap: 10 },
   mismatch: { flexDirection: 'row', alignItems: 'flex-start', gap: 6 },
   mismatchText: { flex: 1, fontSize: 11, color: color.dangerText, lineHeight: 15 },
 

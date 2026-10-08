@@ -271,6 +271,16 @@ function seed(): TaskDetail[] {
 let jobs = seed();
 let onShift = true;
 
+/**
+ * The demo driver's profile photo, held in memory like `onShift`.
+ *
+ * It is the local file URI straight from the picker rather than anything
+ * uploaded — there is no server in demo mode. That makes the whole flow
+ * behave exactly as it does for real (pick, see it appear, remove it again),
+ * and lose it on reload, which is true of every other demo change.
+ */
+let avatarUri: string | null = null;
+
 function find(id: string): TaskDetail {
   const job = jobs.find((j) => j.id === id);
   if (!job) throw new DemoConflict('That job is not on your run.');
@@ -334,8 +344,20 @@ export const demoApi = {
       name: 'Imran Abdullah',
       role: 'driver',
       active: true,
+      avatarUrl: avatarUri,
       driver: { id: 'drv-1', name: 'Imran Abdullah', code: 'D-07', active: true, onShift },
     };
+  },
+
+  async setAvatar(uri: string): Promise<{ avatarUrl: string | null }> {
+    await delay(300);
+    avatarUri = uri;
+    return { avatarUrl: avatarUri };
+  },
+
+  async removeAvatar(): Promise<void> {
+    await delay(200);
+    avatarUri = null;
   },
 
   async getMyTasks(includeDelivered: boolean) {
@@ -344,6 +366,32 @@ export const demoApi = {
       .filter((j) => (includeDelivered ? true : j.status !== 'DELIVERED'))
       .map(toListRow);
     return { data: rows };
+  },
+
+  /**
+   * Delivered jobs, paged the same way the server pages them.
+   *
+   * Sliced rather than returned whole on purpose: demo mode exists to exercise
+   * the real screens, and a fixture that handed back everything at once would
+   * hide every paging bug the live path could have.
+   */
+  async getMyHistory(page: number, pageSize: number) {
+    await delay();
+    const all = jobs
+      .filter((j) => j.status === 'DELIVERED')
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+      .map(toListRow);
+
+    const start = (page - 1) * pageSize;
+    return {
+      data: all.slice(start, start + pageSize),
+      meta: {
+        total: all.length,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(all.length / pageSize)),
+      },
+    };
   },
 
   async getTask(id: string): Promise<TaskDetail> {

@@ -45,7 +45,15 @@ const IMAGE_OPTIONS: ImagePicker.ImagePickerOptions = {
   allowsEditing: false,
 };
 
-function asUploadFile(asset: ImagePicker.ImagePickerAsset, fallbackName: string): UploadFile {
+/**
+ * Picker asset → the shape `fetch` can upload.
+ *
+ * Exported because it is the one genuinely generic part of this module —
+ * profile photos go through it too (see `features/profile/photo.ts`). Everything
+ * else here is about proof specifically: the copy names this stop, and the
+ * picker options are tuned for reading a label on a damaged carton.
+ */
+export function asUploadFile(asset: ImagePicker.ImagePickerAsset, fallbackName: string): UploadFile {
   // The picker reports the mime type on most devices; when it does not, the
   // extension is a better guess than a hardcoded jpeg, and the server sniffs
   // the bytes regardless.

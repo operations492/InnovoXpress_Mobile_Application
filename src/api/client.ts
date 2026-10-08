@@ -189,6 +189,8 @@ export const api = {
     request<T>(path, { ...options, method: 'POST', body }),
   patch: <T>(path: string, body?: unknown, options?: Omit<RequestOptions, 'method' | 'body'>) =>
     request<T>(path, { ...options, method: 'PATCH', body }),
+  delete: <T>(path: string, options?: Omit<RequestOptions, 'method' | 'body' | 'form'>) =>
+    request<T>(path, { ...options, method: 'DELETE' }),
   upload: <T>(path: string, form: FormData, options?: Omit<RequestOptions, 'method' | 'form'>) =>
     // Proof photos are up to 10 MB over a mobile uplink; the default 20s timeout
     // would abort a perfectly healthy upload on a weak signal.

@@ -1,20 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Constants from 'expo-constants';
 
+import { Avatar } from '@/components/Avatar';
 import { Card } from '@/components/Card';
 import { Chip } from '@/components/Chip';
 import { DetailRow } from '@/components/DetailRow';
 import { showDialog } from '@/components/Dialog';
 import { SecondaryButton } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { ShiftStatus } from '@/components/ShiftStatus';
+import { messageFor } from '@/components/States';
 import { Body, Display, Mono, SectionLabel, Small, Tiny } from '@/components/Text';
 import * as buffer from '@/features/location/buffer';
 import * as tracking from '@/features/location/tracking';
-import { useMe } from '@/features/tasks/queries';
+import { pickProfilePhoto, takeProfilePhoto } from '@/features/profile/photo';
+import { useMe, useRemoveAvatar, useSetAvatar } from '@/features/tasks/queries';
 import { env } from '@/lib/env';
-import { formatStamp, initials } from '@/lib/format';
+import { formatStamp } from '@/lib/format';
 import { useAuth } from '@/state/AuthProvider';
 import { useShift } from '@/state/ShiftProvider';
 import { color, font } from '@/theme/tokens';
@@ -32,6 +43,10 @@ export default function MoreScreen() {
   const { signOut } = useAuth();
   const { onShift, tracking: isTracking } = useShift();
   const { data: me, isRefetching, refetch } = useMe();
+
+  const setAvatar = useSetAvatar();
+  const removeAvatar = useRemoveAvatar();
+  const [photoBusy, setPhotoBusy] = useState(false);
 
   const [queued, setQueued] = useState(0);
   const [flushing, setFlushing] = useState(false);
@@ -81,6 +96,56 @@ export default function MoreScreen() {
     });
   }, [onShift, signOut]);
 
+  /**
+   * Take one, choose one, or take the current one down.
+   *
+   * A dialog rather than a native action sheet, so it matches every other
+   * decision in this app and works identically on both platforms. "Remove" only
+   * appears when there is something to remove — offering it against an empty
+   * avatar is an action that cannot do anything.
+   */
+  const choosePhoto = useCallback(async () => {
+    if (!me || photoBusy) return;
+
+    const choice = await showDialog({
+      title: 'Profile picture',
+      message: 'Shown to dispatch and on your own profile.',
+      icon: 'camera',
+      actions: [
+        { label: 'Take a photo', style: 'primary', value: 'camera' },
+        { label: 'Choose from library', value: 'library' },
+        ...(me.avatarUrl ? [{ label: 'Remove photo', style: 'danger' as const, value: 'remove' }] : []),
+        { label: 'Cancel', style: 'cancel' as const, value: 'cancel' },
+      ],
+    });
+
+    if (!choice || choice === 'cancel') return;
+
+    setPhotoBusy(true);
+    try {
+      if (choice === 'remove') {
+        await removeAvatar.mutateAsync();
+        return;
+      }
+
+      const photo =
+        choice === 'camera' ? await takeProfilePhoto() : await pickProfilePhoto();
+      // Null means they backed out of the picker or refused the permission —
+      // the permission case has already explained itself in its own dialog.
+      if (!photo) return;
+
+      await setAvatar.mutateAsync(photo);
+    } catch (e) {
+      void showDialog({
+        title: choice === 'remove' ? 'Could not remove the photo' : 'Could not save the photo',
+        tone: 'danger',
+        message: messageFor(e),
+      });
+    } finally {
+      setPhotoBusy(false);
+    }
+  }, [me, photoBusy, removeAvatar, setAvatar]);
+
   const driver = me?.driver;
 
   return (
@@ -100,9 +165,33 @@ export default function MoreScreen() {
       }
     >
       <View style={styles.profile}>
-        <View style={styles.avatar}>
-          <Body style={styles.avatarText}>{me?.name ? initials(me.name) : '··'}</Body>
-        </View>
+        {/*
+          The photo is the control, not a button beside it. Tapping your own
+          picture to change it is the gesture every phone already teaches, and it
+          keeps the one affordance on the one thing it affects.
+
+          The camera badge is what says so — without it this reads as decoration,
+          and a tap target nobody knows is tappable may as well not exist.
+        */}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            me?.avatarUrl ? 'Change your profile picture' : 'Add a profile picture'
+          }
+          onPress={choosePhoto}
+          disabled={!me || photoBusy}
+          style={({ pressed }) => [styles.avatarTap, pressed ? styles.avatarPressed : null]}
+        >
+          <Avatar uri={me?.avatarUrl} name={me?.name} size={58} />
+
+          <View style={styles.avatarBadge}>
+            {photoBusy ? (
+              <ActivityIndicator size="small" color={color.onPrimary} />
+            ) : (
+              <Icon name="camera" size={12} color={color.onPrimary} />
+            )}
+          </View>
+        </Pressable>
         <View style={styles.profileText}>
           <Display style={styles.name} numberOfLines={1}>
             {me?.name ?? 'Loading…'}
@@ -206,15 +295,26 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
     paddingBottom: 8,
   },
-  avatar: {
-    width: 58,
-    height: 58,
-    borderRadius: 20,
-    backgroundColor: color.primary,
+  // `overflow: 'visible'` is the default, and load-bearing — the badge hangs off
+  // the bottom-right corner and would be clipped without it.
+  avatarTap: { position: 'relative' },
+  avatarPressed: { opacity: 0.75 },
+
+  avatarBadge: {
+    position: 'absolute',
+    right: -3,
+    bottom: -3,
+    width: 23,
+    height: 23,
+    borderRadius: 12,
+    backgroundColor: color.ink,
     alignItems: 'center',
     justifyContent: 'center',
+    // A ring in the page colour, so the badge reads as sitting ON the photo
+    // rather than as part of it — the trick every OS uses for the same control.
+    borderWidth: 2,
+    borderColor: color.bgCanvas,
   },
-  avatarText: { fontFamily: font.display, fontSize: 20, color: color.onPrimary },
   profileText: { flex: 1, gap: 3 },
   name: { fontSize: 20 },
   badges: { flexDirection: 'row', gap: 7, marginTop: 5, flexWrap: 'wrap' },

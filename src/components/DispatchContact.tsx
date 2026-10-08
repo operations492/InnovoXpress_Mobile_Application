@@ -21,6 +21,41 @@ import { Small, Tiny } from './Text';
  * reaching for "Call" at a locked warehouse door rings the customer they are
  * standing outside of.
  */
+/**
+ * The call itself, on its own, so it can appear somewhere other than the card.
+ *
+ * `compact` is for placing it inside another block — shorter, and without the
+ * number printed underneath. The shape and colour stay identical to the card's
+ * button on purpose: a driver who has learned what the purple phone button does
+ * at the bottom of this screen should not have to learn it again halfway up.
+ *
+ * Renders nothing when no number is configured, for the same reason the card
+ * does — see below. The card carries the development warning; repeating it at
+ * every call site would just be noise.
+ */
+export function CallDispatchButton({ compact = false }: { compact?: boolean }) {
+  const phone = env.dispatchPhone;
+  if (!phone) return null;
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Call dispatch on ${phone}`}
+      onPress={() => callNumber(phone, 'dispatch')}
+      style={({ pressed }) => [
+        styles.call,
+        compact ? styles.callCompact : null,
+        pressed ? styles.pressed : null,
+      ]}
+    >
+      <Icon name="phone" size={compact ? 14 : 16} color={color.onPrimary} />
+      <Small style={[styles.callLabel, compact ? styles.callLabelCompact : null]}>
+        Call dispatch
+      </Small>
+    </Pressable>
+  );
+}
+
 export function DispatchContact({ reason }: { reason?: string }) {
   const phone = env.dispatchPhone;
 
@@ -53,15 +88,7 @@ export function DispatchContact({ reason }: { reason?: string }) {
     <View style={styles.card}>
       {reason ? <Small style={styles.reason}>{reason}</Small> : null}
 
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Call dispatch on ${phone}`}
-        onPress={() => callNumber(phone, 'dispatch')}
-        style={({ pressed }) => [styles.call, pressed ? styles.pressed : null]}
-      >
-        <Icon name="phone" size={16} color={color.onPrimary} />
-        <Small style={styles.callLabel}>Call dispatch</Small>
-      </Pressable>
+      <CallDispatchButton />
 
       <Tiny style={styles.number}>{phone}</Tiny>
     </View>
@@ -97,6 +124,13 @@ const styles = StyleSheet.create({
     backgroundColor: color.primary,
   },
   callLabel: { color: color.onPrimary, fontFamily: font.bold, fontSize: 14 },
+
+  // Still a 40pt target — comfortably above the 44dp guideline once the row's
+  // padding is counted, and shrinking it further to save a few pixels would
+  // trade away the one tap a driver makes while holding a parcel.
+  callCompact: { minHeight: 40, gap: 7 },
+  callLabelCompact: { fontSize: 13 },
+
   pressed: { opacity: 0.8 },
 
   number: { fontFamily: font.mono, fontSize: 11, color: color.muted, textAlign: 'center' },

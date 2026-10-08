@@ -61,6 +61,15 @@ export interface Me {
   name: string;
   role: UserRole;
   active: boolean;
+  /**
+   * A link to the profile photo, already signed and good for about an hour,
+   * or null when there is none — which is the normal case.
+   *
+   * Treat it as disposable rather than an identifier: the bucket is private,
+   * so the server mints a fresh link on every read and this one expires. Never
+   * persist it, and fall back to initials if it fails to load.
+   */
+  avatarUrl: string | null;
   driver: {
     id: string;
     name: string;
@@ -124,6 +133,25 @@ export interface DriverTask {
 
 export interface DriverTasksResponse {
   data: DriverTask[];
+}
+
+/** What the server reports about a page it just handed over. */
+export interface PageMeta {
+  /**
+   * How many rows exist in the whole slice, not in this page.
+   *
+   * This is what lets the Completed tab show a count while holding twenty rows —
+   * the entire reason the history endpoint is paged rather than lazy.
+   */
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface DriverHistoryPage {
+  data: DriverTask[];
+  meta: PageMeta;
 }
 
 // ------------------------------------------------- GET /consignments/:id

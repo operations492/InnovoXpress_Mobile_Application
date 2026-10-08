@@ -1,5 +1,12 @@
 import { useMemo } from 'react';
-import { Pressable, RefreshControl, SectionList, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  RefreshControl,
+  SectionList,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -7,7 +14,7 @@ import type { DriverTask } from '@/api/types';
 import { Icon } from '@/components/Icon';
 import { EmptyState, ErrorState, LoadingState } from '@/components/States';
 import { Body, Display, Mono, SectionLabel, Small, Tiny } from '@/components/Text';
-import { useMyTasks } from '@/features/tasks/queries';
+import { useMyHistory } from '@/features/tasks/queries';
 import { dayKey, formatClock, formatDayLabel, formatDuration } from '@/lib/format';
 import { color, font, radius, shadow } from '@/theme/tokens';
 
@@ -54,12 +61,25 @@ export default function HistoryScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const { data, isLoading, isError, error, refetch, isRefetching } = useMyTasks(true);
+  const {
+    data,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isRefetching,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useMyHistory();
 
   const { sections, total, today } = useMemo(() => {
-    const done = (data ?? [])
-      .filter((t) => t.status === 'DELIVERED')
-      .sort((a, b) => new Date(finishedAt(b)).getTime() - new Date(finishedAt(a)).getTime());
+    /*
+     * Already newest-first from the server, and across page boundaries — which a
+     * client-side sort could not achieve, since it only ever sees the pages
+     * fetched so far. Flattened, not re-sorted.
+     */
+    const done = data?.pages.flatMap((p) => p.data) ?? [];
 
     // Insertion order is already newest-first, so the map preserves it and the
     // sections need no second sort of their own.
@@ -75,7 +95,12 @@ export default function HistoryScreen() {
     const list = [...byDay.values()].sort((a, b) => b.at - a.at);
     return {
       sections: list,
-      total: done.length,
+      /*
+       * What exists, not what has been downloaded. The header says "412
+       * completed" from the first page's `meta.total`, while the sections below
+       * it hold however many pages the driver has scrolled through.
+       */
+      total: data?.pages[0]?.meta.total ?? done.length,
       today: list.find((s) => s.title === 'Today')?.data.length ?? 0,
     };
   }, [data]);
@@ -139,6 +164,22 @@ export default function HistoryScreen() {
         )}
         ItemSeparatorComponent={() => <View style={styles.gap} />}
         SectionSeparatorComponent={() => <View style={styles.sectionGap} />}
+        /*
+         * History is paged, so reaching the bottom fetches rather than merely
+         * reveals. Guarded against the repeat calls SectionList makes during a
+         * single overscroll, which would otherwise request the same page twice.
+         */
+        onEndReached={() => {
+          if (hasNextPage && !isFetchingNextPage) void fetchNextPage();
+        }}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          isFetchingNextPage ? (
+            <View style={styles.footer}>
+              <ActivityIndicator size="small" color={color.primary} />
+            </View>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={isRefetching}
@@ -227,6 +268,7 @@ const styles = StyleSheet.create({
 
   list: { padding: 14 },
   listEmpty: { flexGrow: 1 },
+  footer: { paddingVertical: 18, alignItems: 'center' },
   gap: { height: 8 },
   sectionGap: { height: 6 },
 

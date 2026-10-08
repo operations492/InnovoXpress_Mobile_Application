@@ -9,6 +9,7 @@ import type {
   ChatConversationsResponse,
   ChatMessage,
   ChatMessagesPage,
+  DriverHistoryPage,
   DriverTasksResponse,
   LocationPing,
   ManualStatus,
@@ -36,12 +37,38 @@ import type {
 export const getMe = (): Promise<Me> =>
   env.demo ? demoApi.getMe() : api.get<{ user: Me }>('/api/auth/me').then((r) => r.user);
 
-/** My own work list. Scoped by the token; there is no id to tamper with. */
+/**
+ * The run in front of me — everything not yet delivered.
+ *
+ * Deliberately NOT paged. A driver's live work is a handful of jobs, and it is
+ * polled every 45 seconds; splitting something that small into pages would add
+ * round trips to save nothing. It is bounded by the nature of a shift, which is
+ * what makes fetching it whole safe.
+ *
+ * History is the opposite and lives in `getMyHistory` below.
+ */
 export const getMyTasks = (includeDelivered = false): Promise<DriverTasksResponse> =>
   env.demo
     ? demoApi.getMyTasks(includeDelivered)
     : api.get<DriverTasksResponse>(
-        `/api/drivers/me/consignments?includeDelivered=${includeDelivered ? 'true' : 'false'}`,
+        includeDelivered
+          ? '/api/drivers/me/consignments?includeDelivered=true'
+          : '/api/drivers/me/consignments?scope=live',
+      );
+
+/**
+ * Delivered jobs, one page at a time, newest first.
+ *
+ * This is the slice that grows for as long as the driver works here, so it is
+ * the only one that is paged — and the only one that is never polled. The
+ * server orders it, because a client holding page 3 can only sort the rows in
+ * its hand.
+ */
+export const getMyHistory = (page: number, pageSize = 20): Promise<DriverHistoryPage> =>
+  env.demo
+    ? demoApi.getMyHistory(page, pageSize)
+    : api.get<DriverHistoryPage>(
+        `/api/drivers/me/consignments?scope=delivered&page=${page}&pageSize=${pageSize}`,
       );
 
 /**
@@ -272,6 +299,31 @@ export const markRead = (
   api.post<{ lastReadAt: string }>(`/api/chat/conversations/${conversationId}/read`, {
     lastMessageId,
   });
+
+/**
+ * Set this person's profile picture.
+ *
+ * Keyed off the bearer token like the push token below — there is no user id in
+ * the request, so a caller cannot replace somebody else's photo.
+ *
+ * Returns the signed URL of what was just stored, so the caller can show it
+ * immediately rather than waiting for `me` to be refetched. The server still
+ * owns the truth; this is only the same link `me` would hand back.
+ */
+export const uploadAvatar = async (photo: UploadFile): Promise<{ avatarUrl: string | null }> => {
+  if (env.demo) return demoApi.setAvatar(photo.uri);
+
+  const form = new FormData();
+  // `toFilePart`, not the raw {uri,name,type}: Expo's spec-compliant fetch
+  // rejects React Native's FormData part shape. See the note on that function.
+  form.append('photo', await toFilePart(photo));
+
+  return api.upload<{ avatarUrl: string | null }>('/api/auth/avatar', form);
+};
+
+/** Take the profile picture down again. */
+export const removeAvatar = (): Promise<void> =>
+  env.demo ? demoApi.removeAvatar() : api.delete<void>('/api/auth/avatar');
 
 /**
  * Register (or clear) where to push notifications for this session.
