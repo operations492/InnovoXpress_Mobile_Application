@@ -22,6 +22,8 @@ import { messageFor } from '@/components/States';
 import { Body, Display, Mono, SectionLabel, Small, Tiny } from '@/components/Text';
 import * as buffer from '@/features/location/buffer';
 import * as tracking from '@/features/location/tracking';
+import * as podOutbox from '@/features/pod/outbox';
+import * as proofSync from '@/features/pod/sync';
 import { pickProfilePhoto, takeProfilePhoto } from '@/features/profile/photo';
 import { useMe, useRemoveAvatar, useSetAvatar } from '@/features/tasks/queries';
 import { env } from '@/lib/env';
@@ -51,9 +53,25 @@ export default function MoreScreen() {
   const [queued, setQueued] = useState(0);
   const [flushing, setFlushing] = useState(false);
 
+  const [pendingProofs, setPendingProofs] = useState(0);
+  const [flushingProofs, setFlushingProofs] = useState(false);
+
+  // Both queues read together, on the one timer below — they are observed the
+  // same way, for the same reason, and a second interval would buy nothing.
   const refreshQueue = useCallback(async () => {
     setQueued(await buffer.size());
+    setPendingProofs(await podOutbox.size());
   }, []);
+
+  const flushProofs = useCallback(async () => {
+    setFlushingProofs(true);
+    try {
+      await proofSync.flush();
+    } finally {
+      setFlushingProofs(false);
+      await refreshQueue();
+    }
+  }, [refreshQueue]);
 
   useEffect(() => {
     /*
@@ -82,19 +100,41 @@ export default function MoreScreen() {
   }, [refreshQueue]);
 
   const confirmSignOut = useCallback(() => {
+    /*
+     * Say so when proof is about to be destroyed.
+     *
+     * Signing out tries one last send and then clears the queue, because on a
+     * shared handset proof that cannot go as this driver must never upload as
+     * the next one. That is the right rule, but it means the button can
+     * permanently discard a stop's evidence — and a driver who has been offline
+     * all afternoon has no way to know that from "you will need your password".
+     */
+    const shiftLine = onShift
+      ? 'This ends your shift and stops sharing your position. '
+      : '';
+
+    const proofLine =
+      pendingProofs > 0
+        ? `You have ${pendingProofs} stop${pendingProofs === 1 ? '' : 's'} whose proof has not ` +
+          'reached dispatch yet. Signing out now will try once more and then delete it — get ' +
+          'back into signal first if you can. '
+        : '';
+
     void showDialog({
-      title: 'Sign out?',
-      tone: 'warn',
+      title: pendingProofs > 0 ? 'Sign out and lose unsent proof?' : 'Sign out?',
+      tone: pendingProofs > 0 ? 'danger' : 'warn',
       icon: 'log-out',
-      message: onShift
-        ? 'This ends your shift and stops sharing your position. You will need your email and password to get back in.'
-        : 'You will need your email and password to get back in.',
+      message: `${proofLine}${shiftLine}You will need your email and password to get back in.`,
       actions: [
-        { label: 'Sign out', style: 'danger', onPress: () => void signOut() },
+        {
+          label: pendingProofs > 0 ? 'Sign out anyway' : 'Sign out',
+          style: 'danger',
+          onPress: () => void signOut(),
+        },
         { label: 'Cancel', style: 'cancel' },
       ],
     });
-  }, [onShift, signOut]);
+  }, [onShift, pendingProofs, signOut]);
 
   /**
    * Take one, choose one, or take the current one down.
@@ -243,6 +283,24 @@ export default function MoreScreen() {
           }
           onPress={queued === 0 || flushing ? undefined : () => void flushNow()}
         />
+        {/*
+          Only when there is something to say.
+
+          A permanent "0 proofs queued" row would be noise on every other day of
+          a driver's working life — unlike the GPS queue above, which is a
+          standing diagnostic for a thing that runs constantly. Proof waiting to
+          send is an exception, and it should look like one.
+        */}
+        {pendingProofs > 0 ? (
+          <DetailRow
+            icon="file-text"
+            label="Proof waiting to send"
+            value={`${pendingProofs} stop${pendingProofs === 1 ? '' : 's'}`}
+            sub="Captured with no signal. Saved on this phone and sent automatically. Tap to try now."
+            onPress={flushingProofs ? undefined : () => void flushProofs()}
+            accent
+          />
+        ) : null}
         <DetailRow
           icon="clock"
           label="Reporting every"

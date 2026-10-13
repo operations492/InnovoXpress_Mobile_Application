@@ -155,6 +155,8 @@ export interface CaptureArgs {
   itemCount: number;
   note?: string;
   idempotencyKey: string;
+  /** Short from the POD screen, where a driver is waiting — see `CaptureProofInput`. */
+  timeoutMs?: number;
 }
 
 /**

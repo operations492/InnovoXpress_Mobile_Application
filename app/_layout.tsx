@@ -30,6 +30,7 @@ import { DemoBanner } from '@/components/DemoBanner';
 import { DialogHost } from '@/components/Dialog';
 import { LocationGate } from '@/components/LocationGate';
 import { PushNotifications } from '@/features/notifications/PushNotifications';
+import { startProofSync } from '@/features/pod/sync';
 import { env } from '@/lib/env';
 import { startQueryFocusTracking } from '@/lib/queryFocus';
 import { AuthProvider, useAuth } from '@/state/AuthProvider';
@@ -104,6 +105,19 @@ export default function RootLayout() {
   // Stops every poll in the app while it is backgrounded — see the note in
   // `queryFocus`. Mounted once, at the root, because focus is global.
   useEffect(startQueryFocusTracking, []);
+
+  /*
+   * Drains any proof captured while the phone had no signal.
+   *
+   * At the root rather than on the POD screen, because the whole point is that
+   * it runs when that screen is long gone — the driver captured in a basement
+   * three stops ago and has not thought about it since. Refreshing the task
+   * queries afterwards is what makes the job show as delivered once it lands.
+   */
+  useEffect(
+    () => startProofSync(() => void queryClient.invalidateQueries({ queryKey: ['tasks'] })),
+    [queryClient],
+  );
 
   if (!ready) return null;
 

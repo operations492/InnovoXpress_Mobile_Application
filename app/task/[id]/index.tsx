@@ -14,6 +14,7 @@ import {
 import { ApiError } from '@/api/client';
 import type { TaskDetail } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
+import { usePendingProof } from '@/features/pod/usePendingProof';
 import { Card } from '@/components/Card';
 import { showDialog } from '@/components/Dialog';
 import { Chip } from '@/components/Chip';
@@ -73,6 +74,9 @@ export default function TaskInfoScreen() {
   const [mapHeld, setMapHeld] = useState(false);
 
   const plan = useMemo(() => (task ? planFor(nextActionFor(task.status)) : null), [task]);
+
+  // Proof captured offline for this job, not yet uploaded. See usePendingProof.
+  const queuedProof = usePendingProof(task?.id);
 
   const advance = useCallback(() => {
     if (!task || !plan) return;
@@ -245,7 +249,15 @@ export default function TaskInfoScreen() {
           status={task.status}
           timeline={task.timeline}
           plan={plan}
-          busy={changeStatus.isPending}
+          /*
+           * Queued proof disables the stepper's own action too.
+           *
+           * The button at the foot of the screen is not the only way into the
+           * capture form — a step row calls the same `advance`. Guarding one
+           * entrance and not the other is how a driver ends up re-photographing
+           * a stop they have already finished.
+           */
+          busy={changeStatus.isPending || Boolean(queuedProof)}
           onAdvance={advance}
           onViewProof={(podLeg) => router.push(`/task/${task.id}/complete?leg=${podLeg}&view=1`)}
         />
@@ -418,14 +430,33 @@ export default function TaskInfoScreen() {
                 Step {position.done + 1} of {position.total} · {position.current.label}
               </Tiny>
             ) : null}
-            <PrimaryButton
-              label={plan.kind === 'none' ? 'Back to my tasks' : plan.label}
-              icon={
-                plan.kind === 'proof' ? 'camera' : plan.kind === 'none' ? 'check' : 'arrow-right'
-              }
-              loading={changeStatus.isPending}
-              onPress={advance}
-            />
+            {/*
+              Proof for this stop is already captured and waiting to upload.
+
+              The status has not moved and will not until the server accepts it,
+              so the button must not invite the driver to do the whole capture
+              again — they would photograph and sign a second time for a stop
+              they have already finished, and stand there wondering why it never
+              completes.
+            */}
+            {queuedProof ? (
+              <View style={styles.queuedNotice}>
+                <Icon name="upload-cloud" size={15} color={color.warn} />
+                <Tiny style={styles.queuedText}>
+                  {queuedProof.leg === 'PICKUP' ? 'Pickup' : 'Delivery'} proof is saved on this
+                  phone and will send as soon as you have signal. Nothing else to do here.
+                </Tiny>
+              </View>
+            ) : (
+              <PrimaryButton
+                label={plan.kind === 'none' ? 'Back to my tasks' : plan.label}
+                icon={
+                  plan.kind === 'proof' ? 'camera' : plan.kind === 'none' ? 'check' : 'arrow-right'
+                }
+                loading={changeStatus.isPending}
+                onPress={advance}
+              />
+            )}
           </>
         ) : null}
       </View>
@@ -583,6 +614,17 @@ function Shell({ children, insetTop }: { children: React.ReactNode; insetTop: nu
 }
 
 const styles = StyleSheet.create({
+  // Warn-toned, not danger: nothing has gone wrong, the stop is simply not
+  // finished travelling yet.
+  queuedNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    borderRadius: radius.md,
+    backgroundColor: color.warnSoft,
+  },
+  queuedText: { flex: 1, fontSize: 11.5, lineHeight: 16, color: color.warn },
   screen: { flex: 1, backgroundColor: color.bgCanvas },
   scroll: { paddingBottom: 20 },
 

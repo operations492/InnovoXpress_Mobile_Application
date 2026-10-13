@@ -15,6 +15,7 @@ import { ShiftStatus } from '@/components/ShiftStatus';
 import { EmptyState, ErrorState, LoadingState } from '@/components/States';
 import { TaskCard } from '@/components/TaskCard';
 import { Tiny } from '@/components/Text';
+import { usePendingProofIds } from '@/features/pod/usePendingProof';
 import { useMyHistory, useMyTasks } from '@/features/tasks/queries';
 import { isPickupDone } from '@/features/tasks/statusFlow';
 import { useShift } from '@/state/ShiftProvider';
@@ -78,6 +79,9 @@ export default function TasksScreen() {
    * driver has worked here.
    */
   const history = useMyHistory();
+
+  // Jobs whose proof is captured but still on the phone — the card says so.
+  const queuedIds = usePendingProofIds();
 
   const lanes = useMemo(() => {
     /*
@@ -269,7 +273,9 @@ export default function TasksScreen() {
       <FlatList
         data={shown}
         keyExtractor={(t) => t.id}
-        renderItem={({ item }) => <TaskCard task={item} onPress={() => open(item)} />}
+        renderItem={({ item }) => (
+          <TaskCard task={item} onPress={() => open(item)} queued={queuedIds.has(item.id)} />
+        )}
         contentContainerStyle={[
           styles.list,
           shown.length === 0 ? styles.listEmpty : null,

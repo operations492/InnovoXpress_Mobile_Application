@@ -7,6 +7,8 @@ import { setShift } from '@/api/endpoints';
 import * as buffer from '@/features/location/buffer';
 import * as tracking from '@/features/location/tracking';
 import { unregister as unregisterPush } from '@/features/notifications/push';
+import * as podOutbox from '@/features/pod/outbox';
+import * as proofSync from '@/features/pod/sync';
 
 /**
  * Sign-in lives entirely in Supabase — the API has no login endpoint by design.
@@ -107,6 +109,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
      * a device where the new holder cannot even open the record.
      */
     await unregisterPush().catch(() => undefined);
+
+    /*
+     * Try one last send before the token dies, then clear whatever is left.
+     *
+     * Order matters and the flush must come first: unsent proof belongs to the
+     * driver signing out, and this is the final moment it can still be
+     * authenticated as theirs. What does not go now never will — the queue
+     * cannot be left for the next person on a shared handset, where it would
+     * upload under their token and record them as the one who delivered it.
+     */
+    /*
+     * Bounded, because this one can hang.
+     *
+     * A queued upload is allowed ninety seconds, which is right when nobody is
+     * waiting — and wrong here, where a driver who has finished their shift in a
+     * basement would watch a sign-out button spin for a minute and a half before
+     * anything happened. Signing out must not depend on the signal.
+     *
+     * Ten seconds is enough to land a proof when there IS a connection, which is
+     * the case worth catching. Anything slower loses the race and is cleared
+     * below, which is the deliberate trade: on a shared handset, proof that
+     * cannot be sent as this driver must not be left to upload as the next one.
+     */
+    await Promise.race([
+      proofSync.flush().catch(() => undefined),
+      new Promise((resolve) => setTimeout(resolve, 10_000)),
+    ]);
+
+    await podOutbox.clear().catch(() => undefined);
 
     await buffer.clear().catch(() => undefined);
     await buffer.setActiveConsignment(null).catch(() => undefined);
