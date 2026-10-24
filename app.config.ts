@@ -21,6 +21,22 @@ const googleServices = './google-services.json';
 const hasGoogleServices = existsSync(googleServices);
 
 /**
+ * Which Apple push environment this build talks to.
+ *
+ * It becomes the `aps-environment` entitlement, and getting it wrong fails
+ * silently in the worst direction: Apple routes a `development` build's tokens
+ * through the SANDBOX push servers, so a TestFlight or App Store build carrying
+ * that entitlement receives nothing at all — no error on the device, no error at
+ * Expo, just notifications that never arrive.
+ *
+ * The plugin defaults to `development`, which is right for a local build and
+ * wrong for every build a driver would actually install. `eas.json` sets
+ * APNS_ENV=production on the production profile; everything else stays on the
+ * sandbox, which is what a dev client needs.
+ */
+const apnsMode = process.env.APNS_ENV === 'production' ? 'production' : 'development';
+
+/**
  * Expo config as code, not JSON, so the permission strings sit beside the
  * plugins that need them.
  *
@@ -191,6 +207,22 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
          * arriving.
          */
         defaultChannel: 'jobs',
+
+        /**
+         * iOS only — see the note on `apnsMode` above. This is the one setting
+         * that decides whether a shipped build can receive anything at all.
+         */
+        mode: apnsMode,
+
+        /*
+         * Deliberately NOT enabling `enableBackgroundRemoteNotifications`.
+         *
+         * It adds the `remote-notification` background mode, which is for SILENT
+         * pushes that wake the app to fetch. Every notification this app sends is
+         * a visible alert, so the capability would buy nothing and would have to
+         * be justified at App Review, which asks what an unused background mode
+         * is for.
+         */
       },
     ],
     [

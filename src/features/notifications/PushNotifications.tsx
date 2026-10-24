@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -62,6 +63,29 @@ export function PushNotifications() {
   useEffect(() => {
     if (!userId) registeredFor.current = null;
   }, [userId]);
+
+  /*
+   * Clear the app-icon badge whenever the driver is looking at the app.
+   *
+   * iOS only in effect — Android's launcher badge follows the notification
+   * itself, while an iOS badge is a number the app owns and keeps until
+   * something sets it back to zero. Nothing sets one today, so this is
+   * insurance: the moment anything does (a server-side unread count, say) a
+   * stale number cannot survive the driver opening the app and dealing with it,
+   * which is the iOS annoyance everybody recognises.
+   *
+   * On AppState rather than on mount, because the case that matters is coming
+   * back from the notification that raised the badge.
+   */
+  useEffect(() => {
+    const clear = () => void Notifications.setBadgeCountAsync(0).catch(() => undefined);
+
+    clear();
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') clear();
+    });
+    return () => sub.remove();
+  }, []);
 
   /*
    * A notification arriving means the server changed something we are caching.

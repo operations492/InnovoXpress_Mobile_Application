@@ -43,7 +43,8 @@
         "EXPO_PUBLIC_SUPABASE_URL": "https://nrphdvaeujwspfohaesu.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_WCJ8Ap1EtQPP4-Xih-cn3A_nvNIGR8H",
         "EXPO_PUBLIC_LOCATION_INTERVAL_MS": "15000",
-        "EXPO_PUBLIC_LOCATION_DISTANCE_M": "25"
+        "EXPO_PUBLIC_LOCATION_DISTANCE_M": "25",
+        "APNS_ENV": "production"
       }
     }
   },

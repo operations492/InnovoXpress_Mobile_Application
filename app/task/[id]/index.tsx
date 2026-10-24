@@ -15,6 +15,7 @@ import { ApiError } from '@/api/client';
 import type { TaskDetail } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
 import { usePendingProof } from '@/features/pod/usePendingProof';
+import { env } from '@/lib/env';
 import { Card } from '@/components/Card';
 import { showDialog } from '@/components/Dialog';
 import { Chip } from '@/components/Chip';
@@ -197,18 +198,44 @@ export default function TaskInfoScreen() {
               })
             }
           />
-          <ActionTile
-            label="Call"
-            icon="phone"
-            disabled={!focus.phone}
-            onPress={() => callNumber(focus.phone, focus.name)}
-          />
-          <ActionTile
-            label="SMS"
-            icon="message-square"
-            disabled={!focus.phone}
-            onPress={() => textNumber(focus.phone, focus.name)}
-          />
+          {/*
+            Dispatch, not the customer.
+
+            This tile used to ring whoever the current leg pointed at — the
+            sender before collection, the receiver after — so the same button
+            called two different people depending on how far through the job you
+            were. A driver reaching for "Call" at a locked warehouse door got the
+            customer they were standing outside of.
+
+            Calling the sender or the receiver has not gone anywhere: each has
+            its own Call on its own card below, next to the name it dials, where
+            there is nothing to misread. What was missing was the number a driver
+            wants when a stop goes wrong, and it never changes.
+          */}
+          {env.dispatchPhone ? (
+            <ActionTile
+              label="Dispatch"
+              icon="phone"
+              onPress={() => callNumber(env.dispatchPhone, 'dispatch')}
+            />
+          ) : null}
+          {/*
+            Dispatch too, for the same reason as Call above.
+
+            A placeholder for the real thing: this opens the phone's SMS app,
+            which is a conversation nobody else on the order can see and which
+            lives on one handset. The intent is an in-app thread per consignment,
+            so dispatch and the driver are talking in the order's own history
+            rather than in a text message. Until that exists, a text to the right
+            number beats a text to the wrong one.
+          */}
+          {env.dispatchPhone ? (
+            <ActionTile
+              label="Text"
+              icon="message-square"
+              onPress={() => textNumber(env.dispatchPhone, 'dispatch')}
+            />
+          ) : null}
           {/*
             Shown only when there is an address to write to, rather than greyed
             out on every job.
