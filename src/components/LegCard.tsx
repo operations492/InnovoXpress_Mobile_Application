@@ -1,6 +1,13 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 import { color, font, radius } from '@/theme/tokens';
-import { callNumber, openNavigation, sendEmail, shareStop, type Destination } from '@/lib/navigate';
+import {
+  callNumber,
+  openNavigation,
+  sendEmail,
+  shareStop,
+  textNumber,
+  type Destination,
+} from '@/lib/navigate';
 import { Card } from './Card';
 import { ContactRow } from './ContactRow';
 import { Icon } from './Icon';
@@ -98,6 +105,21 @@ export function LegCard({
           {phone ? (
             <QuickLink label="Call" icon="phone" onPress={() => callNumber(phone)} />
           ) : null}
+          {/*
+            Texting the customer belongs here, beside the name it sends to.
+
+            It used to live in the toolbar at the top of the screen, which aimed
+            at whichever leg was current — so the same button texted the sender
+            before collection and the receiver after. Here there is nothing to
+            misread: the number is printed directly above it.
+          */}
+          {phone ? (
+            <QuickLink
+              label="SMS"
+              icon="message-square"
+              onPress={() => textNumber(phone, name)}
+            />
+          ) : null}
           {email ? (
             <QuickLink
               label="Email"
@@ -139,7 +161,7 @@ function QuickLink({
   onPress,
 }: {
   label: string;
-  icon: 'phone' | 'mail';
+  icon: 'phone' | 'mail' | 'message-square';
   onPress: () => void;
 }) {
   return (

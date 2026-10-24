@@ -14,6 +14,8 @@ import {
 import { ApiError } from '@/api/client';
 import type { TaskDetail } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
+import { usePendingProof } from '@/features/pod/usePendingProof';
+import { env } from '@/lib/env';
 import { Card } from '@/components/Card';
 import { showDialog } from '@/components/Dialog';
 import { Chip } from '@/components/Chip';
@@ -73,6 +75,9 @@ export default function TaskInfoScreen() {
   const [mapHeld, setMapHeld] = useState(false);
 
   const plan = useMemo(() => (task ? planFor(nextActionFor(task.status)) : null), [task]);
+
+  // Proof captured offline for this job, not yet uploaded. See usePendingProof.
+  const queuedProof = usePendingProof(task?.id);
 
   const advance = useCallback(() => {
     if (!task || !plan) return;
@@ -193,18 +198,44 @@ export default function TaskInfoScreen() {
               })
             }
           />
-          <ActionTile
-            label="Call"
-            icon="phone"
-            disabled={!focus.phone}
-            onPress={() => callNumber(focus.phone, focus.name)}
-          />
-          <ActionTile
-            label="SMS"
-            icon="message-square"
-            disabled={!focus.phone}
-            onPress={() => textNumber(focus.phone, focus.name)}
-          />
+          {/*
+            Dispatch, not the customer.
+
+            This tile used to ring whoever the current leg pointed at — the
+            sender before collection, the receiver after — so the same button
+            called two different people depending on how far through the job you
+            were. A driver reaching for "Call" at a locked warehouse door got the
+            customer they were standing outside of.
+
+            Calling the sender or the receiver has not gone anywhere: each has
+            its own Call on its own card below, next to the name it dials, where
+            there is nothing to misread. What was missing was the number a driver
+            wants when a stop goes wrong, and it never changes.
+          */}
+          {env.dispatchPhone ? (
+            <ActionTile
+              label="Dispatch"
+              icon="phone"
+              onPress={() => callNumber(env.dispatchPhone, 'dispatch')}
+            />
+          ) : null}
+          {/*
+            Dispatch too, for the same reason as Call above.
+
+            A placeholder for the real thing: this opens the phone's SMS app,
+            which is a conversation nobody else on the order can see and which
+            lives on one handset. The intent is an in-app thread per consignment,
+            so dispatch and the driver are talking in the order's own history
+            rather than in a text message. Until that exists, a text to the right
+            number beats a text to the wrong one.
+          */}
+          {env.dispatchPhone ? (
+            <ActionTile
+              label="Text"
+              icon="message-square"
+              onPress={() => textNumber(env.dispatchPhone, 'dispatch')}
+            />
+          ) : null}
           {/*
             Shown only when there is an address to write to, rather than greyed
             out on every job.
@@ -245,7 +276,15 @@ export default function TaskInfoScreen() {
           status={task.status}
           timeline={task.timeline}
           plan={plan}
-          busy={changeStatus.isPending}
+          /*
+           * Queued proof disables the stepper's own action too.
+           *
+           * The button at the foot of the screen is not the only way into the
+           * capture form — a step row calls the same `advance`. Guarding one
+           * entrance and not the other is how a driver ends up re-photographing
+           * a stop they have already finished.
+           */
+          busy={changeStatus.isPending || Boolean(queuedProof)}
           onAdvance={advance}
           onViewProof={(podLeg) => router.push(`/task/${task.id}/complete?leg=${podLeg}&view=1`)}
         />
@@ -418,14 +457,33 @@ export default function TaskInfoScreen() {
                 Step {position.done + 1} of {position.total} · {position.current.label}
               </Tiny>
             ) : null}
-            <PrimaryButton
-              label={plan.kind === 'none' ? 'Back to my tasks' : plan.label}
-              icon={
-                plan.kind === 'proof' ? 'camera' : plan.kind === 'none' ? 'check' : 'arrow-right'
-              }
-              loading={changeStatus.isPending}
-              onPress={advance}
-            />
+            {/*
+              Proof for this stop is already captured and waiting to upload.
+
+              The status has not moved and will not until the server accepts it,
+              so the button must not invite the driver to do the whole capture
+              again — they would photograph and sign a second time for a stop
+              they have already finished, and stand there wondering why it never
+              completes.
+            */}
+            {queuedProof ? (
+              <View style={styles.queuedNotice}>
+                <Icon name="upload-cloud" size={15} color={color.warn} />
+                <Tiny style={styles.queuedText}>
+                  {queuedProof.leg === 'PICKUP' ? 'Pickup' : 'Delivery'} proof is saved on this
+                  phone and will send as soon as you have signal. Nothing else to do here.
+                </Tiny>
+              </View>
+            ) : (
+              <PrimaryButton
+                label={plan.kind === 'none' ? 'Back to my tasks' : plan.label}
+                icon={
+                  plan.kind === 'proof' ? 'camera' : plan.kind === 'none' ? 'check' : 'arrow-right'
+                }
+                loading={changeStatus.isPending}
+                onPress={advance}
+              />
+            )}
           </>
         ) : null}
       </View>
@@ -583,6 +641,17 @@ function Shell({ children, insetTop }: { children: React.ReactNode; insetTop: nu
 }
 
 const styles = StyleSheet.create({
+  // Warn-toned, not danger: nothing has gone wrong, the stop is simply not
+  // finished travelling yet.
+  queuedNotice: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    padding: 12,
+    borderRadius: radius.md,
+    backgroundColor: color.warnSoft,
+  },
+  queuedText: { flex: 1, fontSize: 11.5, lineHeight: 16, color: color.warn },
   screen: { flex: 1, backgroundColor: color.bgCanvas },
   scroll: { paddingBottom: 20 },
 

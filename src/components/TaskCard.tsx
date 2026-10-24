@@ -20,7 +20,16 @@ import { Body, Mono, Small, Tiny } from './Text';
  * unit of work is the run from A to B, and splitting it into two rows is what
  * makes couriers deliver the right box to the wrong door.
  */
-export function TaskCard({ task, onPress }: { task: DriverTask; onPress: () => void }) {
+export function TaskCard({
+  task,
+  onPress,
+  queued = false,
+}: {
+  task: DriverTask;
+  onPress: () => void;
+  /** Proof for this stop is captured and waiting to upload — see features/pod/outbox. */
+  queued?: boolean;
+}) {
   const now = useNow();
   const accent = colorForStatus(task.status);
   const position = journeyPosition(task.status);
@@ -49,10 +58,29 @@ export function TaskCard({ task, onPress }: { task: DriverTask; onPress: () => v
         </Body>
 
         <View style={styles.status}>
-          <View style={[styles.statusDot, { backgroundColor: accent }]} />
-          <Tiny style={[styles.statusLabel, { color: accent }]} numberOfLines={1}>
-            {STATUS_LABELS[task.status]}
-          </Tiny>
+          {/*
+            Replaces the status rather than sitting beside it.
+
+            The server still calls this job AT_DELIVERY, and showing that next to
+            "Sending" would read as a contradiction. For the driver there is only
+            one fact worth knowing here: the stop is done and the phone is
+            carrying the evidence — so that is the only thing said.
+          */}
+          {queued ? (
+            <>
+              <Icon name="upload-cloud" size={13} color={color.warn} />
+              <Tiny style={[styles.statusLabel, { color: color.warn }]} numberOfLines={1}>
+                Sending
+              </Tiny>
+            </>
+          ) : (
+            <>
+              <View style={[styles.statusDot, { backgroundColor: accent }]} />
+              <Tiny style={[styles.statusLabel, { color: accent }]} numberOfLines={1}>
+                {STATUS_LABELS[task.status]}
+              </Tiny>
+            </>
+          )}
           <Icon name="chevron-right" size={16} color={color.faint} />
         </View>
       </View>

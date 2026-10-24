@@ -128,6 +128,19 @@ export interface CaptureProofInput {
    * stored proof with 200 instead of "already captured" with 409.
    */
   idempotencyKey: string;
+  /**
+   * How long to wait before giving up, in milliseconds.
+   *
+   * The POD screen passes something short and the outbox does not, and the
+   * difference is who is waiting. A driver standing at a door needs an answer in
+   * seconds; the background retry has nobody watching it and can afford the full
+   * default for a large photo on a weak uplink.
+   *
+   * Giving up early is only safe BECAUSE the queue exists — an abandoned attempt
+   * is queued rather than lost, and the idempotency key makes the retry free
+   * even if the abandoned request did reach the server after all.
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -187,6 +200,7 @@ export async function captureProof({
   itemCount,
   note,
   idempotencyKey,
+  timeoutMs,
 }: CaptureProofInput) {
   if (env.demo) return demoApi.captureProof(id, leg, note);
 
@@ -201,7 +215,7 @@ export async function captureProof({
   return api.upload<{ proof: Proof[] }>(
     `/api/consignments/${id}/pod/${leg.toLowerCase()}`,
     form,
-    { headers: { 'Idempotency-Key': idempotencyKey } },
+    { headers: { 'Idempotency-Key': idempotencyKey }, ...(timeoutMs ? { timeoutMs } : {}) },
   );
 }
 
