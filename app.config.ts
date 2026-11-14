@@ -166,6 +166,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     'expo-router',
     'expo-secure-store',
     'expo-font',
+    // Opens a release letter or bill of lading in a Chrome Custom Tab / Safari
+    // view sheet, so the driver never leaves the app to read a PDF.
+    'expo-web-browser',
     [
       'expo-splash-screen',
       {

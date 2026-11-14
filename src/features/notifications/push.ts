@@ -149,7 +149,8 @@ function projectId(): string | null {
  * development, where somebody can act on them.
  */
 export async function register(): Promise<void> {
-  if (env.demo) return;
+  // Web has no push to register for — see the note in PushNotifications.tsx.
+  if (env.demo || Platform.OS === 'web') return;
 
   const granted = await requestPermission();
   if (!granted) {

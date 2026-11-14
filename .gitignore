@@ -45,3 +45,6 @@ yarn-error.*
 .env.local
 
 map.osm
+# adb tunnel keeper (npm run tunnels)
+.tunnels.log
+.tunnels.log.err

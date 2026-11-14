@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
 
-import type { PodLeg } from '@/api/types';
+import type { OrderDocumentKind, PodLeg } from '@/api/types';
 import type { UploadFile } from './capture';
 
 /**
@@ -56,7 +56,37 @@ interface StoredFile {
   type: string;
 }
 
+/**
+ * A document signature captured at a stop, waiting to go.
+ *
+ * In the SAME queue as the proof deliberately. The server refuses proof for a
+ * stop whose paperwork is unsigned, so a signature must land before the proof
+ * for that stop — and the queue already drains strictly oldest-first, which is
+ * exactly that guarantee. Two queues would have no ordering between them at all,
+ * and the proof would arrive first often enough to matter.
+ */
+export interface PendingDocSignature {
+  kind: 'doc-signature';
+  id: string;
+  consignmentId: string;
+  orderNo: string;
+  leg: PodLeg;
+  /** Which document — the server takes a slug built from this. */
+  document: OrderDocumentKind;
+  /** Server-supplied wording, kept so the queue can name it without a fetch. */
+  label: string;
+  signature: StoredFile;
+  queuedAt: string;
+  armed: boolean;
+  attempts: number;
+}
+
 export interface PendingProof {
+  /**
+   * Discriminates the two things this queue carries. Absent on entries written
+   * before document signing existed, which are all proofs — hence optional.
+   */
+  kind?: 'proof';
   id: string;
   consignmentId: string;
   /** Carried for display: the queue is shown before the task list can be fetched. */
@@ -101,6 +131,14 @@ export interface PendingProof {
   attempts: number;
 }
 
+/** Anything the outbox carries. Drained oldest-first, whatever the kind. */
+export type PendingUpload = PendingProof | PendingDocSignature;
+
+/** Narrowing helper: entries written before document signing have no `kind`. */
+export function isProof(entry: PendingUpload): entry is PendingProof {
+  return entry.kind !== 'doc-signature';
+}
+
 /* ------------------------------------------------------------------ storage */
 
 function outboxDir(): Directory {
@@ -112,12 +150,12 @@ function resolve(stored: StoredFile): File {
   return new File(outboxDir(), stored.file);
 }
 
-async function readAll(): Promise<PendingProof[]> {
+async function readAll(): Promise<PendingUpload[]> {
   try {
     const raw = await AsyncStorage.getItem(KEY);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as PendingProof[]) : [];
+    return Array.isArray(parsed) ? (parsed as PendingUpload[]) : [];
   } catch (e) {
     /*
      * A truncated write (process killed mid-save) costs the queue rather than
@@ -148,7 +186,7 @@ async function readAll(): Promise<PendingProof[]> {
  * been thrown away. Trimming is a decision about losing evidence, so it is made
  * out loud, in `enqueue`, where the files can be cleaned up with it.
  */
-async function writeAll(entries: PendingProof[]): Promise<void> {
+async function writeAll(entries: PendingUpload[]): Promise<void> {
   if (entries.length === 0) {
     await AsyncStorage.removeItem(KEY);
     return;
@@ -170,9 +208,14 @@ function exclusive<T>(operation: () => Promise<T>): Promise<T> {
   return result;
 }
 
+/** The stored files an entry owns - two for a proof, one for a signature. */
+function filesOf(entry: PendingUpload): StoredFile[] {
+  return isProof(entry) ? [entry.photo, entry.signature] : [entry.signature];
+}
+
 /** Best-effort removal of an entry's files. A leftover image is harmless. */
-function discard(entry: PendingProof): void {
-  for (const stored of [entry.photo, entry.signature]) {
+function discard(entry: PendingUpload): void {
+  for (const stored of filesOf(entry)) {
     try {
       const file = resolve(stored);
       if (file.exists) file.delete();
@@ -204,6 +247,55 @@ export interface QueueProofInput {
  * nothing queued rather than an entry pointing at files that were never
  * written. The caller is then free to discard the originals.
  */
+/**
+ * Queue a document signature, to go out ahead of the proof for the same stop.
+ *
+ * Armed immediately, unlike a stashed proof: nothing is trying to upload this in
+ * the foreground, so there is no in-flight window to protect. It is the queue's
+ * from the moment it is written.
+ */
+export function enqueueDocSignature(input: {
+  consignmentId: string;
+  orderNo: string;
+  leg: PodLeg;
+  document: OrderDocumentKind;
+  label: string;
+  signature: UploadFile;
+}): Promise<string> {
+  return exclusive(async () => {
+    const dir = outboxDir();
+    if (!dir.exists) dir.create({ intermediates: true });
+
+    const stamp =
+      `${input.consignmentId}-${input.leg}-${input.document}-${Date.now()}-` +
+      Math.random().toString(36).slice(2, 8);
+
+    const ext = input.signature.name.split('.').pop()?.toLowerCase() ?? 'png';
+    const filename = `${stamp}-docsig.${ext}`;
+    const destination = new File(dir, filename);
+    if (destination.exists) destination.delete();
+    await new File(input.signature.uri).copy(destination);
+
+    const entry: PendingDocSignature = {
+      kind: 'doc-signature',
+      id: `${stamp}-${Math.random().toString(36).slice(2, 8)}`,
+      consignmentId: input.consignmentId,
+      orderNo: input.orderNo,
+      leg: input.leg,
+      document: input.document,
+      label: input.label,
+      signature: { file: filename, name: input.signature.name, type: input.signature.type },
+      queuedAt: new Date().toISOString(),
+      armed: true,
+      attempts: 0,
+    };
+
+    await writeAll([...(await readAll()), entry]);
+    if (__DEV__) console.log(`[pod] queued ${entry.label} signature for ${entry.orderNo}`);
+    return entry.id;
+  });
+}
+
 export function enqueue(input: QueueProofInput): Promise<string> {
   return exclusive(async () => {
     const dir = outboxDir();
@@ -264,7 +356,7 @@ export function enqueue(input: QueueProofInput): Promise<string> {
       throw copyError;
     }
 
-    const entry: PendingProof = {
+    const entry: PendingUpload = {
       id: `${stamp}-${Math.random().toString(36).slice(2, 8)}`,
       consignmentId: input.consignmentId,
       orderNo: input.orderNo,
@@ -343,16 +435,21 @@ export function enqueue(input: QueueProofInput): Promise<string> {
  * would sit at the head of the queue blocking every stop behind it.
  */
 export function materialise(
-  entry: PendingProof,
-): { photo: UploadFile; signature: UploadFile } | null {
-  const photo = resolve(entry.photo);
-  const signature = resolve(entry.signature);
-  if (!photo.exists || !signature.exists) return null;
-
-  return {
-    photo: { uri: photo.uri, name: entry.photo.name, type: entry.photo.type },
-    signature: { uri: signature.uri, name: entry.signature.name, type: entry.signature.type },
+  entry: PendingUpload,
+): { photo?: UploadFile; signature: UploadFile } | null {
+  const asUpload = (stored: StoredFile): UploadFile | null => {
+    const file = resolve(stored);
+    return file.exists ? { uri: file.uri, name: stored.name, type: stored.type } : null;
   };
+
+  const signature = asUpload(entry.signature);
+  if (!signature) return null;
+
+  // A document signature travels alone; only a proof carries a photo too.
+  if (!isProof(entry)) return { signature };
+
+  const photo = asUpload(entry.photo);
+  return photo ? { photo, signature } : null;
 }
 
 /**
@@ -438,7 +535,7 @@ export function sweepOrphanFiles(): Promise<number> {
     if (!dir.exists) return 0;
 
     const referenced = new Set(
-      (await readAll()).flatMap((e) => [e.photo.file, e.signature.file]),
+      (await readAll()).flatMap((e) => filesOf(e).map((f) => f.file)),
     );
 
     let removed = 0;
@@ -466,7 +563,7 @@ export function recordAttempt(id: string): Promise<void> {
 }
 
 /** The oldest armed entry, ready to send. Nothing is removed until the send succeeds. */
-export function peek(): Promise<PendingProof | null> {
+export function peek(): Promise<PendingUpload | null> {
   return exclusive(async () => (await readAll()).find((e) => e.armed) ?? null);
 }
 
@@ -486,7 +583,7 @@ export function size(): Promise<number> {
 }
 
 /** Armed entries only: what the screens describe as waiting to send. */
-export function list(): Promise<PendingProof[]> {
+export function list(): Promise<PendingUpload[]> {
   return exclusive(async () => (await readAll()).filter((e) => e.armed));
 }
 

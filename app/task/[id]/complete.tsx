@@ -13,13 +13,15 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError } from '@/api/client';
-import type { PodLeg } from '@/api/types';
+import * as endpoints from '@/api/endpoints';
+import type { OrderDocument, PodLeg } from '@/api/types';
 import { ActionTile, PrimaryButton } from '@/components/Button';
 import { showDialog } from '@/components/Dialog';
 import { CallDispatchButton, DispatchContact } from '@/components/DispatchContact';
 import { Icon } from '@/components/Icon';
 import { ScreenHeader } from '@/components/ScreenHeader';
 import { SignaturePad } from '@/components/SignaturePad';
+import { StopPaperwork, openDocumentUrl, type DocBusy } from '@/components/StopPaperwork';
 import { ErrorState, LoadingState, messageFor } from '@/components/States';
 import { Body, Mono, Small, Tiny } from '@/components/Text';
 import {
@@ -33,6 +35,7 @@ import {
 import * as podOutbox from '@/features/pod/outbox';
 import { isRetryable } from '@/features/pod/sync';
 import * as proofSync from '@/features/pod/sync';
+import { useStopPaperwork } from '@/features/pod/documents';
 import { usePendingProof } from '@/features/pod/usePendingProof';
 import { useCaptureProof, useProofs, useTask } from '@/features/tasks/queries';
 import { env } from '@/lib/env';
@@ -141,16 +144,111 @@ export default function CompleteTaskScreen() {
    * `expected > 0` guards an order with no items, where there is nothing to
    * match against and any positive count is accepted.
    */
+  /**
+   * The paperwork the operator attached to this stop, if any.
+   *
+   * Skipped entirely in read-only mode — that screen shows proof already
+   * captured and has no stop to finish.
+   */
+  const paperwork = useStopPaperwork(task?.id, leg, !readOnly);
+
   const ready =
     Boolean(photo && signature && signedByName) &&
     counted !== null &&
     counted > 0 &&
-    !mismatch;
+    !mismatch &&
+    /*
+     * Every document that had to be signed here, is.
+     *
+     * The server checks this again and is the real gate — it refuses proof with
+     * a 409 naming the document. This copy exists so the button is out of reach
+     * rather than failing after the driver has photographed everything, which is
+     * the difference between a rule and a trap.
+     */
+    paperwork.outstanding.length === 0;
+
+  /**
+   * Which document the pad is currently collecting for, or null for the ordinary
+   * proof signature.
+   *
+   * One pad serves both: the customer signs the same way whether they are
+   * signing for the delivery or on a bill of lading, and two pads would be two
+   * places for the WebView gesture handling to go wrong.
+   */
+  const [signingDoc, setSigningDoc] = useState<OrderDocument | null>(null);
+
+  /** Which paperwork row is mid-request, so its buttons can say so and lock. */
+  const [busyDoc, setBusyDoc] = useState<DocBusy | null>(null);
+
+  /**
+   * Send one document signature.
+   *
+   * Online it goes straight up and the list is re-read from the response. With
+   * no signal it joins the SAME queue the proof uses, which is what keeps the
+   * ordering the server requires: the queue drains oldest-first, the signature
+   * was queued first, so it lands before the proof that depends on it.
+   */
+  const sendDocSignature = useCallback(
+    async (doc: OrderDocument, file: UploadFile) => {
+      if (!task) return;
+
+      setBusyDoc({ kind: doc.kind, action: 'sign' });
+      try {
+        await endpoints.signDocument(task.id, doc.kind, leg, file);
+        discardFile(file.uri);
+        await paperwork.refresh();
+      } catch (e) {
+        if (!(e instanceof ApiError && e.isOffline)) {
+          void showDialog({
+            title: `Could not send the ${doc.label}`,
+            tone: 'danger',
+            message: messageFor(e),
+          });
+          return;
+        }
+
+        await podOutbox.enqueueDocSignature({
+          consignmentId: task.id,
+          orderNo: task.orderNo,
+          leg,
+          document: doc.kind,
+          label: doc.label,
+          signature: file,
+        });
+        discardFile(file.uri);
+        await paperwork.refresh();
+
+        void showDialog({
+          title: 'Signature saved',
+          tone: 'warn',
+          icon: 'wifi-off',
+          message:
+            `The signed ${doc.label} is stored on your phone and will send once you are back ` +
+            'online. You can finish this stop now.',
+          actions: [{ label: 'Continue', style: 'primary' }],
+        });
+      } finally {
+        setBusyDoc(null);
+      }
+    },
+    [task, leg, paperwork],
+  );
 
   const onSignature = useCallback(
     (dataUrl: string) => {
       try {
         const file = signatureToFile(dataUrl);
+
+        // A document signature is sent on its own and never becomes the proof
+        // signature, so it does not touch `signature` state at all.
+        if (signingDoc) {
+          const doc = signingDoc;
+          setSigningDoc(null);
+          setPadOpen(false);
+          void sendDocSignature(doc, file);
+          return;
+        }
+
         setSignature((previous) => {
           if (previous) discardFile(previous.uri);
           return file;
@@ -164,7 +262,7 @@ export default function CompleteTaskScreen() {
         });
       }
     },
-    [],
+    [signingDoc, sendDocSignature],
   );
 
   /**
@@ -399,6 +497,30 @@ export default function CompleteTaskScreen() {
          */
         if (stashedId) await podOutbox.remove(stashedId);
 
+        /*
+         * A 409 here is usually paperwork, not a closed stop.
+         *
+         * The server refuses proof while a document that had to be signed at
+         * this stop is unsigned — which happens when the operator ticked the box
+         * after this screen loaded its list. Re-reading tells us which it was,
+         * and puts the newly-required document on screen so the driver can act
+         * on it rather than reading a message about a job being "already
+         * closed" that is still sitting in front of them.
+         */
+        if (e instanceof ApiError && e.isConflict) {
+          await paperwork.refresh();
+          if (paperwork.outstanding.length > 0) {
+            void showDialog({
+              title: 'Paperwork still to sign',
+              tone: 'warn',
+              icon: 'edit-3',
+              message: messageFor(e),
+              actions: [{ label: 'Got it', style: 'primary' }],
+            });
+            return;
+          }
+        }
+
         const conflict = e instanceof ApiError && e.isConflict;
         void showDialog({
           title: conflict ? 'This stop is already closed' : 'Could not save the proof',
@@ -422,6 +544,7 @@ export default function CompleteTaskScreen() {
       }
     },
     [
+      paperwork,
       stashProof,
       keepQueued,
       ready,
@@ -719,6 +842,43 @@ export default function CompleteTaskScreen() {
           {leg === 'PICKUP' ? 'Picked Up' : 'Delivered'}, and that cannot be undone from the app.
         </Tiny>
 
+        <StopPaperwork
+          documents={paperwork.documents}
+          leg={leg}
+          queuedKinds={paperwork.queuedKinds}
+          busy={busy}
+          busyDoc={busyDoc}
+          onOpen={(doc) => {
+            /*
+             * Re-read before opening rather than using the link already on
+             * screen: it is signed and short-lived, so a screen that has been
+             * open a few minutes is holding a dead url.
+             */
+            setBusyDoc({ kind: doc.kind, action: 'open' });
+            void (async () => {
+              try {
+                await paperwork.refresh();
+                const fresh = paperwork.documents.find((d) => d.kind === doc.kind) ?? doc;
+                if (await openDocumentUrl(fresh.url)) return;
+
+                void showDialog({
+                  title: `Could not open the ${doc.label}`,
+                  tone: 'danger',
+                  message:
+                    'The link may have expired, or this phone has no app that can open it. Pull ' +
+                    'down to refresh and try again.',
+                });
+              } finally {
+                setBusyDoc(null);
+              }
+            })();
+          }}
+          onSign={(doc) => {
+            setSigningDoc(doc);
+            setPadOpen(true);
+          }}
+        />
+
         {/*
           Always present, on both legs — not conditional on anything going wrong.
 
@@ -767,15 +927,24 @@ export default function CompleteTaskScreen() {
                     ? 'A signature is still needed.'
                     : !photo
                       ? 'A photo is still needed.'
-                      : 'The item count does not match this order.'}
+                      : paperwork.outstanding.length > 0
+                        ? // Named, not counted: "1 document outstanding" makes a
+                          // driver hunt for which one.
+                          `The ${paperwork.outstanding
+                            .map((d) => d.label)
+                            .join(' and ')} still needs signing.`
+                        : 'The item count does not match this order.'}
           </Tiny>
         ) : null}
       </View>
 
       <SignaturePad
         visible={padOpen}
-        signerName={receivedBy || party?.name}
-        onCancel={() => setPadOpen(false)}
+        signerName={signingDoc ? signingDoc.label : receivedBy || party?.name}
+        onCancel={() => {
+          setPadOpen(false);
+          setSigningDoc(null);
+        }}
         onCapture={onSignature}
       />
     </KeyboardAvoidingView>

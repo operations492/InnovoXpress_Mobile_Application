@@ -19,6 +19,15 @@ import { useAuth } from './AuthProvider';
  * makes the device agree with it.
  */
 
+/**
+ * How often to re-attempt the clock-on while it has not taken.
+ *
+ * Fifteen seconds is the same beat the location service reports on, so a phone
+ * that has just regained signal rejoins the dispatch map and the shift at
+ * roughly the same moment rather than one lagging the other.
+ */
+const CLOCK_ON_RETRY_MS = 15_000;
+
 interface ShiftValue {
   onShift: boolean;
   /** True while the clock-on call is in flight, so the pill can say "Starting…". */
@@ -104,29 +113,63 @@ export function ShiftProvider({ children }: { children: ReactNode }) {
    */
   const clockingOn = useRef(false);
 
-  useEffect(() => {
-    if (!session || !me || onShift) return;
-    // A login with no driver record has no shift to open.
-    if (!me.driver) return;
-    // Only guards against overlapping calls, NOT against trying again.
-    if (clockingOn.current) return;
+  /*
+   * Narrowed deps, so the retry timer below is not restarted constantly.
+   *
+   * `me` is a new object on every refetch and `setShift` on every render, so
+   * depending on either would tear down and rebuild the interval before it ever
+   * fired — the timer would exist and never tick. `mutateAsync` is stable in
+   * TanStack v5, and the only thing about `me` this effect cares about is
+   * whether a driver record exists at all.
+   */
+  const hasDriver = Boolean(me?.driver);
+  const clockOn = setShift.mutateAsync;
 
-    clockingOn.current = true;
-    void (async () => {
+  useEffect(() => {
+    // A login with no driver record has no shift to open.
+    if (!session || !hasDriver || onShift) return;
+
+    let cancelled = false;
+
+    const attempt = async () => {
+      // Guards overlapping calls only, NOT trying again.
+      if (cancelled || clockingOn.current) return;
+
+      clockingOn.current = true;
       try {
-        await setShift.mutateAsync(true);
+        await clockOn(true);
         void tracking.reportNow();
       } catch {
-        // Offline at launch is normal, and there is no manual switch to fall
-        // back on any more, so this has to keep trying. `me` is the retry clock:
-        // it refetches on focus, on reconnect and past 15 seconds of staleness,
-        // which is frequent enough to recover quickly and far too rare to be a
-        // storm.
+        // Offline at launch is normal and there is no manual switch to fall
+        // back on, so failure is not final — the interval below tries again.
       } finally {
         clockingOn.current = false;
       }
-    })();
-  }, [session, me, onShift, setShift]);
+    };
+
+    void attempt();
+
+    /*
+     * Its own clock, rather than riding on `me` refetching.
+     *
+     * That was the previous arrangement and it left drivers stuck off shift:
+     * `me` refetches on focus, on reconnect, or past its staleTime — but
+     * `onlineManager` is not wired to any network source in this app, so there
+     * is no reconnect event on a phone, and an app left in the FOREGROUND never
+     * changes focus either. A driver who launched with no signal and then got
+     * it back stayed off shift, invisible to dispatch, until they happened to
+     * switch away from the app and back.
+     *
+     * Cheap to leave running: it only exists while off shift, which with this
+     * in place is a few seconds at launch and otherwise never.
+     */
+    const timer = setInterval(() => void attempt(), CLOCK_ON_RETRY_MS);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [session, hasDriver, onShift, clockOn]);
 
   /** Flush the offline queue whenever the driver comes back to the app. */
   useEffect(() => {

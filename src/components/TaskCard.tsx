@@ -57,6 +57,19 @@ export function TaskCard({
           {TASK_TYPE_LABELS[task.taskType]}
         </Body>
 
+        {/*
+          Paperwork, flagged before the driver opens anything.
+
+          `documentKinds` rides along on the list response precisely so this
+          costs no request. It says only that the order HAS documents — which
+          stop they belong to is the detail screen's business.
+        */}
+        {task.documentKinds && task.documentKinds.length > 0 ? (
+          <View style={styles.clip}>
+            <Icon name="paperclip" size={13} color={color.muted} />
+          </View>
+        ) : null}
+
         <View style={styles.status}>
           {/*
             Replaces the status rather than sitting beside it.
@@ -202,6 +215,7 @@ const styles = StyleSheet.create({
   },
   pressed: { backgroundColor: color.surfaceSoft },
 
+  clip: { marginRight: 8 },
   head: {
     flexDirection: 'row',
     alignItems: 'center',

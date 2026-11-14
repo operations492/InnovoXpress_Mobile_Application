@@ -129,6 +129,17 @@ export interface DriverTask {
   items: TaskItemSummary[];
   proofs: { leg: PodLeg; capturedAt: string }[];
   nextAction: NextAction;
+  /**
+   * Which paperwork is attached to this order, if any.
+   *
+   * Only the kinds travel, never a storage path — the files come from
+   * `/api/consignments/:id/documents`, which mints short-lived links and filters
+   * to the stop the driver is standing at. Enough for a card to say "has
+   * paperwork" without a second request.
+   *
+   * Optional because a server from before this existed does not send it.
+   */
+  documentKinds?: OrderDocumentKind[];
 }
 
 export interface DriverTasksResponse {
@@ -358,4 +369,50 @@ export interface ChatAttachmentLinks {
   /** Only ever set for verified images; everything else is download-only. */
   previewUrl: string | null;
   expiresInSeconds: number;
+}
+
+// ------------------------------------- GET /consignments/:id/documents?leg=
+
+export type OrderDocumentKind = 'RELEASE_LETTER' | 'BILL_OF_LADING';
+
+/** URL slug for the kind — what the sign endpoint takes in its path. */
+export const DOCUMENT_SLUG: Record<OrderDocumentKind, string> = {
+  RELEASE_LETTER: 'release-letter',
+  BILL_OF_LADING: 'bill-of-lading',
+};
+
+export interface DocumentSignature {
+  leg: PodLeg;
+  capturedAt: string;
+  signatureUrl: string | null;
+  /** The document with the signature appended. Null if the original could not be parsed. */
+  signedUrl: string | null;
+}
+
+export interface OrderDocument {
+  kind: OrderDocumentKind;
+  /** Server-supplied wording — "release letter", "bill of lading". */
+  label: string;
+  mime: string;
+  bytes: number;
+  /**
+   * A link to the document itself. Short-lived, so it is re-fetched every time
+   * rather than held: an hour-old list would hand the driver a dead link at the
+   * one moment they need to show the customer something.
+   */
+  url: string | null;
+  showAtPickup: boolean;
+  showAtDelivery: boolean;
+  signAtPickup: boolean;
+  signAtDelivery: boolean;
+  createdAt: string;
+  /** What has already been signed, per leg. */
+  signatures: DocumentSignature[];
+}
+
+export interface StopDocuments {
+  consignmentId: string;
+  leg: PodLeg | null;
+  /** Already filtered to the stop asked for — paperwork for the other leg is absent. */
+  documents: OrderDocument[];
 }

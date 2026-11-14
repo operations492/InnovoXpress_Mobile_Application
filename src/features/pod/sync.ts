@@ -4,7 +4,7 @@ import { ApiError } from '@/api/client';
 import * as endpoints from '@/api/endpoints';
 import { env } from '@/lib/env';
 import * as outbox from './outbox';
-import type { PendingProof } from './outbox';
+import type { PendingUpload } from './outbox';
 
 /**
  * Sending whatever proof is waiting.
@@ -118,7 +118,7 @@ const MAX_ATTEMPTS = 20;
  * second code path on the server side is how the offline route ends up subtly
  * different from the one everybody tests.
  */
-async function send(entry: PendingProof): Promise<void> {
+async function send(entry: PendingUpload): Promise<void> {
   const files = outbox.materialise(entry);
 
   if (!files) {
@@ -131,10 +131,29 @@ async function send(entry: PendingProof): Promise<void> {
     );
   }
 
+  /*
+   * A document signature goes on its own, and goes FIRST.
+   *
+   * It is first because the queue is strictly oldest-first and the screen queues
+   * the signature before the proof — which is the ordering the server demands,
+   * since it refuses proof for a stop whose paperwork is unsigned. Nothing here
+   * enforces that beyond the order the entries were written in; that is the
+   * whole reason both kinds share one queue.
+   */
+  if (!outbox.isProof(entry)) {
+    await endpoints.signDocument(
+      entry.consignmentId,
+      entry.document,
+      entry.leg,
+      files.signature,
+    );
+    return;
+  }
+
   await endpoints.captureProof({
     id: entry.consignmentId,
     leg: entry.leg,
-    photo: files.photo,
+    photo: files.photo!,
     signature: files.signature,
     signedByName: entry.signedByName,
     itemCount: entry.itemCount,
@@ -173,11 +192,40 @@ async function drain(): Promise<void> {
        * by an earlier attempt whose response was lost in a way the idempotency
        * key could not cover. The queue's job is done either way.
        */
+      /*
+       * A 409 means one of two opposite things, and the API gives them the same
+       * code — so ask what actually happened rather than guess.
+       *
+       * "Already captured" means the work is done and the entry should go.
+       * "Paperwork at this stop is unsigned" means the proof was REFUSED and is
+       * still the only copy in existence; dropping it would destroy a capture
+       * the driver believes is safe. Before documents existed only the first was
+       * possible, which is why this used to be an unconditional drop.
+       *
+       * The question is settled by looking: if proof for this leg is stored, it
+       * was the first. One extra read, only on a 409, which is rare.
+       */
       if (e instanceof ApiError && e.isConflict) {
-        await outbox.remove(entry.id);
-        if (__DEV__) console.log(`[pod] ${entry.orderNo} was already closed — dropping from queue`);
-        onSent?.();
-        continue;
+        const alreadyStored = await endpoints
+          .getProofs(entry.consignmentId)
+          .then((proofs) => proofs.some((p) => p.leg === entry.leg))
+          .catch(() => false);
+
+        if (alreadyStored) {
+          await outbox.remove(entry.id);
+          if (__DEV__) {
+            console.log(`[pod] ${entry.orderNo} was already closed — dropping from queue`);
+          }
+          onSent?.();
+          continue;
+        }
+
+        console.warn(
+          `[pod] ${entry.orderNo} (${entry.leg}) was refused and is NOT stored — keeping it ` +
+            `queued: ${e.message}`,
+        );
+        await outbox.recordAttempt(entry.id);
+        throw e;
       }
 
       if (!isRetryable(e)) {

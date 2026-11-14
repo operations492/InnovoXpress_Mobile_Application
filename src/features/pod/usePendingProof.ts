@@ -69,7 +69,10 @@ export function usePendingProof(consignmentId: string | undefined, leg?: PodLeg)
       return;
     }
 
-    const all = await outbox.list();
+    // Proofs only. A queued document signature also belongs to this stop, but it
+    // does not mean the stop is finished — the driver may still be standing
+    // there with a photo to take.
+    const all = (await outbox.list()).filter(outbox.isProof);
     setPending(
       all.find((e) => e.consignmentId === consignmentId && (!leg || e.leg === leg)) ?? null,
     );

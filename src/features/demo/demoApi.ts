@@ -394,6 +394,17 @@ export const demoApi = {
     };
   },
 
+  /** No paperwork in demo mode - the path every order without documents takes. */
+  async getStopDocuments(consignmentId: string, leg: PodLeg) {
+    await delay(140);
+    return { consignmentId, leg, documents: [] };
+  },
+
+  async signDocument(consignmentId: string, _kind: string, leg: PodLeg) {
+    await delay(200);
+    return { consignmentId, leg, documents: [] };
+  },
+
   async getTask(id: string): Promise<TaskDetail> {
     await delay(220);
     return structuredClone(find(id));

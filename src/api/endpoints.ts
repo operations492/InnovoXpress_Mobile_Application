@@ -3,6 +3,7 @@ import { Platform } from 'react-native';
 import { api } from './client';
 import { env } from '@/lib/env';
 import { demoApi } from '@/features/demo/demoApi';
+import { DOCUMENT_SLUG } from './types';
 import type { UploadFile } from '@/features/pod/capture';
 import type {
   ChatAttachmentLinks,
@@ -14,9 +15,11 @@ import type {
   LocationPing,
   ManualStatus,
   Me,
+  OrderDocumentKind,
   PodLeg,
   Proof,
   ShiftResponse,
+  StopDocuments,
   TaskDetail,
 } from './types';
 
@@ -103,6 +106,46 @@ export const getProofs = (id: string): Promise<Proof[]> =>
   env.demo
     ? demoApi.getProofs(id)
     : api.get<{ proof: Proof[] }>(`/api/consignments/${id}/pod`).then((r) => r.proof);
+
+/**
+ * The paperwork for the stop the driver is standing at.
+ *
+ * `leg` is not optional here even though the server allows it: a driver must
+ * never be handed the other stop's documents, and the easiest way to guarantee
+ * that is to never ask without saying which stop.
+ *
+ * Re-fetched rather than cached for long, because every `url` inside is a signed
+ * link that stops working after a few minutes.
+ */
+export const getStopDocuments = (id: string, leg: PodLeg): Promise<StopDocuments> =>
+  env.demo
+    ? demoApi.getStopDocuments(id, leg)
+    : api.get<StopDocuments>(`/api/consignments/${id}/documents?leg=${leg}`);
+
+/**
+ * One document signed at one stop.
+ *
+ * Sent on its own rather than with the proof: the server stores it, stamps it
+ * onto a copy of the document, and only then will it accept proof for a stop
+ * that required it. Returns the refreshed list, so the caller can re-render from
+ * the response instead of guessing what changed.
+ */
+export const signDocument = async (
+  id: string,
+  kind: OrderDocumentKind,
+  leg: PodLeg,
+  signature: UploadFile,
+): Promise<StopDocuments> => {
+  if (env.demo) return demoApi.signDocument(id, kind, leg);
+
+  const form = new FormData();
+  form.append('signature', await toFilePart(signature));
+
+  return api.upload<StopDocuments>(
+    `/api/consignments/${id}/documents/${DOCUMENT_SLUG[kind]}/sign/${leg.toLowerCase()}`,
+    form,
+  );
+};
 
 export interface CaptureProofInput {
   id: string;

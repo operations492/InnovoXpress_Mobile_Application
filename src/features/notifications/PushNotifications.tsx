@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -26,6 +26,17 @@ import { ensureChannels, register, type PushData } from './push';
  * still valid, which is a moment only `AuthProvider.signOut` can see — by the
  * time this component unmounts the session is already gone.
  */
+/**
+ * Native only.
+ *
+ * expo-notifications has no web implementation worth the name: the token
+ * listener is a documented no-op, and `getLastNotificationResponseAsync`
+ * throws outright. The app runs on web as a development convenience, and a
+ * feature that exists to buzz a phone has nothing to do there - so every effect
+ * below exits early rather than each call being wrapped in its own try/catch.
+ */
+const SUPPORTED = Platform.OS !== 'web';
+
 export function PushNotifications() {
   const { session } = useAuth();
   const router = useRouter();
@@ -45,6 +56,7 @@ export function PushNotifications() {
   const registeredFor = useRef<string | null>(null);
 
   useEffect(() => {
+    if (!SUPPORTED) return;
     if (!userId || env.demo) return;
     if (registeredFor.current === userId) return;
     registeredFor.current = userId;
@@ -61,6 +73,7 @@ export function PushNotifications() {
   // A sign-out must let the next sign-in register again, even if it is the same
   // driver — their token was just cleared on the server.
   useEffect(() => {
+    if (!SUPPORTED) return;
     if (!userId) registeredFor.current = null;
   }, [userId]);
 
@@ -78,6 +91,7 @@ export function PushNotifications() {
    * back from the notification that raised the badge.
    */
   useEffect(() => {
+    if (!SUPPORTED) return;
     const clear = () => void Notifications.setBadgeCountAsync(0).catch(() => undefined);
 
     clear();
@@ -97,6 +111,7 @@ export function PushNotifications() {
    * focus anyway.
    */
   useEffect(() => {
+    if (!SUPPORTED) return;
     const sub = Notifications.addNotificationReceivedListener((notification) => {
       const data = (notification.request.content.data ?? {}) as PushData;
 
@@ -125,6 +140,7 @@ export function PushNotifications() {
   const handled = useRef<Set<string>>(new Set());
 
   useEffect(() => {
+    if (!SUPPORTED) return;
     let active = true;
 
     const open = (response: Notifications.NotificationResponse) => {
